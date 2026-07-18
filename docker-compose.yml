@@ -1,0 +1,31 @@
+# Compose para desarrollo local: levanta el servicio + MongoDB juntos.
+# En Coolify NO se usa este archivo directamente (Coolify gestiona el deploy),
+# pero sirve como referencia de como se conectan las piezas.
+services:
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      MONGO_URI: mongodb://mongo:27017
+      MONGO_DB: mercadolibre
+      MONGO_COLLECTION: productos
+      STORAGE_STATE_PATH: /app/storage_state.json
+      HEADLESS: "true"
+      # API_KEY: "cambia-esto"   # descomenta para exigir X-API-Key
+    volumes:
+      # Monta tu sesion generada en local dentro del contenedor.
+      - ./storage_state.json:/app/storage_state.json:ro
+    depends_on:
+      - mongo
+
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+
+volumes:
+  mongo-data:

@@ -1,0 +1,17 @@
+# --- Sesion de MercadoLibre: NUNCA subir (contiene tu sesion iniciada) ---
+storage_state.json
+
+# --- Entorno ---
+.env
+venv/
+.venv/
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# --- Sistema ---
+.DS_Store
