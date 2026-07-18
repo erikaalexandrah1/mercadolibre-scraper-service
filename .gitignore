@@ -1,6 +1,9 @@
 # --- Sesion de MercadoLibre: NUNCA subir (contiene tu sesion iniciada) ---
 storage_state.json
 
+# --- Guia de integracion del backend: lleva la API key, NO subir ---
+BACKEND_INTEGRATION.md
+
 # --- Entorno ---
 .env
 venv/
