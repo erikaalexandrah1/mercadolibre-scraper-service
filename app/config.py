@@ -25,7 +25,9 @@ class Settings(BaseSettings):
     # --- MongoDB ---
     mongo_uri: str = "mongodb://localhost:27017"
     mongo_db: str = "mercadolibre"
-    mongo_collection: str = "productos"
+    # Colecciones: productos scrapeados y catalogo propio (referencias).
+    mongo_collection: str = "products"
+    mongo_references_collection: str = "references"
 
     # --- Playwright / scraping ---
     # Ruta al archivo de sesion generado con scripts/login.py.
@@ -34,6 +36,10 @@ class Settings(BaseSettings):
     user_agent: str = DEFAULT_USER_AGENT
     # Timeout por navegacion, en milisegundos.
     nav_timeout_ms: int = 30000
+
+    # --- Embeddings (CLIP) ---
+    # Modelo de sentence-transformers para vectorizar imagenes.
+    clip_model: str = "clip-ViT-B-32"
 
     # --- API ---
     # Si se define, todas las rutas (excepto /health) exigen el header

@@ -4,8 +4,10 @@ Microservicio HTTP que scrapea productos de **MercadoLibre Venezuela** con
 Playwright y los guarda en **MongoDB**. Pensado para desplegarse en un servidor
 (Coolify) como backend.
 
-Por cada producto extrae: `titulo`, `precio`, `moneda`, `envio_gratis`,
-`cantidad_vendida`, `vendedor`, `tienda_oficial`, `link`, `consulta`.
+Por cada producto extrae (keys en ingles): `title`, `price`, `currency`,
+`free_shipping`, `sold_quantity`, `seller`, `official_store`, `image_url`,
+`link`, `query`. Ademas puede **comparar por imagen** (CLIP) tu catalogo contra
+la competencia y devolver un `similarity` (0..1) por producto.
 
 ---
 
@@ -40,14 +42,35 @@ Detalles de diseño y restricciones en [AGENTS.md](AGENTS.md).
 
 ## API
 
-| Metodo | Ruta            | Descripcion                                       |
-|--------|-----------------|---------------------------------------------------|
-| GET    | `/health`       | Estado del servicio y de Mongo                    |
-| POST   | `/scrape`       | Scrapea UNA busqueda y guarda en Mongo            |
-| POST   | `/scrape/batch` | Scrapea VARIAS busquedas (para cron del backend)  |
-| GET    | `/productos`    | Lista productos guardados                          |
+| Metodo | Ruta                  | Descripcion                                       |
+|--------|-----------------------|---------------------------------------------------|
+| GET    | `/health`             | Estado del servicio y de Mongo                    |
+| POST   | `/scrape`             | Scrapea UNA busqueda y guarda en Mongo            |
+| POST   | `/scrape/batch`       | Scrapea VARIAS busquedas (para cron del backend)  |
+| GET    | `/products`           | Lista productos (filtros: query, ref_id, min_similarity) |
+| POST   | `/references/import`  | Importa tu catalogo desde "Mis publicaciones" (CLIP) |
+| GET    | `/references`         | Lista tu catalogo propio                          |
+| PATCH  | `/references/{ref_id}`| Edita `search_queries` (tags de busqueda) / `active` |
+| POST   | `/compare`            | Compara catalogo vs competencia por imagen        |
 
 Docs interactivas (Swagger) en `/docs` al levantar el servicio.
+
+### Flujo de comparacion por imagen (CLIP)
+
+```
+1. POST /references/import?limit=3   -> importa tus productos (title+foto+embedding)
+2. PATCH /references/{ref_id}        -> ajusta los tags de busqueda
+   { "search_queries": ["modulo regulador lm2596"] }
+   (el titulo original puede tener terminos que la competencia no usa)
+3. POST /compare { "ref_id": "MLVxxx", "max_items": 5 }
+   -> busca competencia, vectoriza sus fotos y calcula similitud vs tu foto
+4. GET /products?ref_id=MLVxxx&min_similarity=0.8
+   -> competidores mas parecidos a tu producto, ordenados por similitud
+```
+
+`search_queries` es una **lista**: puedes poner varias variantes y el scraper
+busca todas. `import` sin `limit` importa TODO tu catalogo (puede tardar; es una
+operacion manual de una sola vez).
 
 Ejemplo (una busqueda):
 

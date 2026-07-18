@@ -1,12 +1,18 @@
-# Imagen oficial de Playwright: trae Chromium + todas las dependencias del SO
-# ya instaladas, evitando el error tipico de "faltan librerias" en el servidor.
+# Imagen oficial de Playwright: trae Chromium + dependencias del SO ya listas.
 FROM mcr.microsoft.com/playwright/python:v1.45.0-jammy
 
 WORKDIR /app
 
-# Instalar dependencias primero para aprovechar la cache de capas de Docker.
+# 1) Instalar torch en su build de CPU (evita descargar ~2GB de CUDA).
+#    Al fijar la misma version que requirements.txt, pip la da por satisfecha.
+RUN pip install --no-cache-dir torch==2.3.1 --index-url https://download.pytorch.org/whl/cpu
+
+# 2) Resto de dependencias (torch ya esta instalado, pip lo omite).
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+
+# 3) Pre-descargar el modelo CLIP en build para que el primer request no espere.
+RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('clip-ViT-B-32')"
 
 # Copiar el codigo de la aplicacion.
 COPY app ./app
@@ -19,6 +25,4 @@ ENV HEADLESS=true
 
 EXPOSE 8000
 
-# Arranca el servidor. Un solo worker: el scraping es pesado y con estado de
-# navegador; escalar se hace con mas replicas, no con mas workers.
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

@@ -33,6 +33,16 @@ def _limpiar_vendedor(texto_titulo: str) -> str:
     return re.sub(r"^Vendido por\s+", "", texto_titulo, flags=re.IGNORECASE).strip()
 
 
+def _extraer_imagen(page) -> str:
+    """URL de la foto principal del producto (o cadena vacia si no hay)."""
+    img = page.query_selector(
+        "figure.ui-pdp-gallery__figure img, img.ui-pdp-image, .ui-pdp-gallery__figure img"
+    )
+    if not img:
+        return ""
+    return img.get_attribute("src") or img.get_attribute("data-zoom") or ""
+
+
 def _sin_duplicados(items: list[str]) -> list[str]:
     """Elimina duplicados conservando el orden de aparicion."""
     vistos: set[str] = set()
@@ -68,7 +78,7 @@ class MercadoLibreScraper:
             # 2) Entrar a cada producto y extraer los datos.
             for link in links:
                 datos = self._scrapear_producto(page, link)
-                datos["consulta"] = query
+                datos["query"] = query
                 productos.append(datos)
         return productos
 
@@ -105,33 +115,34 @@ class MercadoLibreScraper:
         page.goto(url, wait_until="domcontentloaded")
         page.wait_for_timeout(1200)
 
-        titulo = _texto(page, "h1.ui-pdp-title")
-        moneda = _texto(page, ".ui-pdp-price__second-line .andes-money-amount__currency-symbol")
+        title = _texto(page, "h1.ui-pdp-title")
+        currency = _texto(page, ".ui-pdp-price__second-line .andes-money-amount__currency-symbol")
         entero = _texto(page, ".ui-pdp-price__second-line .andes-money-amount__fraction")
-        precio = entero.replace(".", "") if entero else ""
+        price = entero.replace(".", "") if entero else ""
 
         subtitulo = _texto(page, ".ui-pdp-subtitle") or _texto(page, ".ui-pdp-header__subtitle")
-        cantidad_vendida = _parsear_cantidad_vendida(subtitulo)
+        sold_quantity = _parsear_cantidad_vendida(subtitulo)
 
         cuerpo = page.inner_text("body")
-        envio_gratis = bool(re.search(r"env[ií]o\s+gratis", cuerpo, re.IGNORECASE))
+        free_shipping = bool(re.search(r"env[ií]o\s+gratis", cuerpo, re.IGNORECASE))
 
-        vendedor = _limpiar_vendedor(_texto(page, ".ui-seller-data-header__title"))
+        seller = _limpiar_vendedor(_texto(page, ".ui-seller-data-header__title"))
         # Las tiendas oficiales enlazan a /tienda/... con 'official_store_id' y
         # muestran un banner; los vendedores comunes no.
-        tienda_oficial = bool(
+        official_store = bool(
             page.query_selector(".ui-seller-data a[href*='official_store_id=']")
             or page.query_selector(".ui-seller-data-banner__container")
         )
 
         return {
-            "titulo": titulo,
-            "precio": precio,
-            "moneda": moneda,
-            "envio_gratis": envio_gratis,
-            "cantidad_vendida": cantidad_vendida,
-            "vendedor": vendedor,
-            "tienda_oficial": tienda_oficial,
+            "title": title,
+            "price": price,
+            "currency": currency,
+            "free_shipping": free_shipping,
+            "sold_quantity": sold_quantity,
+            "seller": seller,
+            "official_store": official_store,
+            "image_url": _extraer_imagen(page),
             "link": url,
         }
 

@@ -13,21 +13,36 @@ con Playwright y los guarda en **MongoDB**. Extrae por producto: `titulo`,
 
 ```
 app/
-  main.py        # FastAPI: rutas /health, /scrape, /productos
+  main.py        # FastAPI: rutas /health, /scrape, /products, /references, /compare
   config.py      # Settings (pydantic-settings) desde variables de entorno
-  schemas.py     # Contratos de la API (Pydantic)
+  schemas.py     # Contratos de la API (Pydantic) — keys en INGLES
   browser.py     # Fabrica de BrowserContext de Playwright (anti-deteccion)
   scraper.py     # MercadoLibreScraper: logica de scraping
-  repository.py  # ProductoRepository: acceso a MongoDB
+  repository.py  # ProductRepository / ReferenceRepository: acceso a MongoDB
+  embeddings.py  # ImageEmbedder: CLIP ViT-B/32 (vectoriza imagenes) + coseno
+  catalog.py     # CatalogImporter: importa "Mis publicaciones" -> references
+  comparison.py  # ComparisonService: compara catalogo vs competencia por imagen
 scripts/
   login.py       # Genera storage_state.json — SOLO se corre en local
 tests/
-  test_scraper.py
+  test_scraper.py, test_image.py
 ```
 
-Regla de dependencias: `main` -> (`scraper`, `repository`, `schemas`, `config`).
-`scraper` -> `browser` -> `config`. No romper esta direccion (nada de que
-`repository` importe `scraper`, etc.).
+Regla de dependencias: `main` -> (`scraper`, `repository`, `catalog`,
+`comparison`, `embeddings`, `schemas`, `config`). `scraper`/`catalog` ->
+`browser` -> `config`. `comparison` -> (`scraper`, `embeddings`). No romper esta
+direccion (nada de que `repository` importe `scraper`, etc.).
+
+## Modelo de datos (Mongo)
+
+- Coleccion `products`: productos scrapeados (upsert por `link`). Campos en
+  ingles: `title, price, currency, free_shipping, sold_quantity, seller,
+  official_store, image_url, link, query`. Si vienen de una comparacion,
+  ademas `ref_id` y `similarity` (0..1, coseno de imagen).
+- Coleccion `references`: catalogo propio (upsert por `ref_id`). Campos:
+  `ref_id, title, search_queries (list, editable), image_url, embedding,
+  active, updated_at`. `title` es informativo; **`search_queries` es lo que el
+  scraper USA para buscar** (el usuario lo edita para no limitarse al titulo).
 
 ## Restricciones NO negociables (aprendidas a la fuerza)
 
@@ -48,11 +63,22 @@ Regla de dependencias: `main` -> (`scraper`, `repository`, `schemas`, `config`).
 ## Convenciones de codigo
 
 - Python 3.10+, type hints en firmas publicas.
-- Playwright **sincrono**; las rutas de FastAPI que scrapean se declaran con
-  `def` (no `async def`) para que corran en el threadpool sin bloquear el loop.
-- Acceso a datos solo via `ProductoRepository`; no usar pymongo directo fuera de ahi.
+- **Keys de datos en INGLES** (title, price, seller...), no espanol.
+- Playwright **sincrono**; las rutas de FastAPI que scrapean/comparan se declaran
+  con `def` (no `async def`) para que corran en el threadpool sin bloquear el loop.
+- Acceso a datos solo via los repositorios; no usar pymongo directo fuera de ahi.
 - Configuracion solo via `app/config.py` (nunca leer `os.environ` disperso).
-- Guardado en Mongo con **upsert por `link`** para no duplicar.
+- Guardado en Mongo con **upsert** (`link` en products, `ref_id` en references).
+- El modelo CLIP se carga una sola vez (`@lru_cache` en `embeddings.py`).
+- **Gotcha:** no nombrar un metodo `list` en una clase que luego use `list[...]`
+  en anotaciones (tapa el builtin). `repository.py` usa
+  `from __future__ import annotations` para evitarlo.
+
+## Multi-tenancy (pendiente, futuro)
+
+Hoy es single-tenant (solo la duena). Para comercializar: añadir `cliente_id`
+a `products` y `references`, coleccion `clientes` con `api_key_hash`, y resolver
+el tenant desde la API key. Dejar el codigo listo para ese eje.
 
 ## Como correr
 
