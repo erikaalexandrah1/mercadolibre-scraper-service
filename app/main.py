@@ -14,7 +14,14 @@ from fastapi import Depends, FastAPI, Header, HTTPException, status
 from app import __version__
 from app.config import Settings, get_settings
 from app.repository import ProductoRepository
-from app.schemas import Producto, ScrapeRequest, ScrapeResponse
+from app.schemas import (
+    BatchResultItem,
+    BatchScrapeRequest,
+    BatchScrapeResponse,
+    Producto,
+    ScrapeRequest,
+    ScrapeResponse,
+)
 from app.scraper import MercadoLibreScraper
 
 app = FastAPI(
@@ -80,6 +87,50 @@ def scrape(
         consulta=payload.query,
         total=len(productos),
         productos=[Producto(**p) for p in productos],
+    )
+
+
+@app.post(
+    "/scrape/batch",
+    response_model=BatchScrapeResponse,
+    dependencies=[Depends(verificar_api_key)],
+    tags=["scraping"],
+)
+def scrape_batch(
+    payload: BatchScrapeRequest,
+    settings: Settings = Depends(get_settings),
+) -> BatchScrapeResponse:
+    """
+    Scrapea varias busquedas en una sola llamada y persiste todo.
+
+    Pensado para que un backend externo con su propio cron envie el listado
+    de terminos a monitorear (ej. una vez al dia). Si un termino falla, se
+    reporta su error y se continua con los demas.
+    """
+    repo = ProductoRepository(settings)
+    scraper = MercadoLibreScraper(settings)
+    resultados: list[BatchResultItem] = []
+    total_productos = 0
+    try:
+        for query in payload.queries:
+            try:
+                productos = scraper.run(
+                    query=query, pages=payload.pages, max_items=payload.max_items
+                )
+                for p in productos:
+                    p["consulta"] = query
+                repo.guardar_muchos(productos)
+                total_productos += len(productos)
+                resultados.append(BatchResultItem(consulta=query, total=len(productos)))
+            except Exception as e:  # noqa: BLE001 - un termino no debe tumbar el batch
+                resultados.append(BatchResultItem(consulta=query, total=0, error=str(e)))
+    finally:
+        repo.close()
+
+    return BatchScrapeResponse(
+        total_queries=len(payload.queries),
+        total_productos=total_productos,
+        resultados=resultados,
     )
 
 

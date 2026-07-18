@@ -5,7 +5,7 @@ Playwright y los guarda en **MongoDB**. Pensado para desplegarse en un servidor
 (Coolify) como backend.
 
 Por cada producto extrae: `titulo`, `precio`, `moneda`, `envio_gratis`,
-`cantidad_vendida`, `link`, `consulta`.
+`cantidad_vendida`, `vendedor`, `tienda_oficial`, `link`, `consulta`.
 
 ---
 
@@ -40,15 +40,16 @@ Detalles de diseño y restricciones en [AGENTS.md](AGENTS.md).
 
 ## API
 
-| Metodo | Ruta         | Descripcion                                  |
-|--------|--------------|----------------------------------------------|
-| GET    | `/health`    | Estado del servicio y de Mongo               |
-| POST   | `/scrape`    | Ejecuta un scraping y guarda en Mongo        |
-| GET    | `/productos` | Lista productos guardados                    |
+| Metodo | Ruta            | Descripcion                                       |
+|--------|-----------------|---------------------------------------------------|
+| GET    | `/health`       | Estado del servicio y de Mongo                    |
+| POST   | `/scrape`       | Scrapea UNA busqueda y guarda en Mongo            |
+| POST   | `/scrape/batch` | Scrapea VARIAS busquedas (para cron del backend)  |
+| GET    | `/productos`    | Lista productos guardados                          |
 
 Docs interactivas (Swagger) en `/docs` al levantar el servicio.
 
-Ejemplo:
+Ejemplo (una busqueda):
 
 ```bash
 curl -X POST http://localhost:8000/scrape \
@@ -56,7 +57,17 @@ curl -X POST http://localhost:8000/scrape \
   -d '{"query": "laptop", "pages": 1, "max_items": 5}'
 ```
 
-Si defines `API_KEY`, añade el header `-H "X-API-Key: TU_CLAVE"`.
+Ejemplo (batch — pensado para que tu backend lo llame con un cron diario):
+
+```bash
+curl -X POST http://localhost:8000/scrape/batch \
+  -H "Content-Type: application/json" \
+  -d '{"queries": ["laptop", "mouse gamer"], "pages": 1, "max_items": 20}'
+```
+
+`pages` recorre varias paginas de resultados; `max_items` es el tope de
+productos por pagina (una pagina de MercadoLibre trae ~48). Si defines
+`API_KEY`, añade el header `-H "X-API-Key: TU_CLAVE"`.
 
 ## Correr en local
 

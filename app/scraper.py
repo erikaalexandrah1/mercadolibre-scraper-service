@@ -28,6 +28,22 @@ def _parsear_cantidad_vendida(texto_sub: str) -> int:
     return int(m.group(1).replace(".", "")) if m else 0
 
 
+def _limpiar_vendedor(texto_titulo: str) -> str:
+    """Quita el prefijo 'Vendido por' que muestran los vendedores no oficiales."""
+    return re.sub(r"^Vendido por\s+", "", texto_titulo, flags=re.IGNORECASE).strip()
+
+
+def _sin_duplicados(items: list[str]) -> list[str]:
+    """Elimina duplicados conservando el orden de aparicion."""
+    vistos: set[str] = set()
+    unicos: list[str] = []
+    for it in items:
+        if it not in vistos:
+            vistos.add(it)
+            unicos.append(it)
+    return unicos
+
+
 class MercadoLibreScraper:
     """Scraper de resultados de busqueda de MercadoLibre Venezuela."""
 
@@ -41,19 +57,19 @@ class MercadoLibreScraper:
             page = context.new_page()
             self._buscar(page, query)
 
+            # 1) Recorrer las paginas de resultados juntando todos los links.
+            links: list[str] = []
             for n in range(pages):
-                links = self._recolectar_links(page, max_items)
-                for link in links:
-                    datos = self._scrapear_producto(page, link)
-                    datos["consulta"] = query
-                    productos.append(datos)
+                links.extend(self._recolectar_links(page, max_items))
+                if n < pages - 1 and not self._ir_siguiente_pagina(page):
+                    break  # no hay mas paginas
+            links = _sin_duplicados(links)
 
-                if n < pages - 1:
-                    # Volver a resultados y avanzar hasta la pagina n+1.
-                    self._buscar(page, query)
-                    for _ in range(n + 1):
-                        if not self._ir_siguiente_pagina(page):
-                            break
+            # 2) Entrar a cada producto y extraer los datos.
+            for link in links:
+                datos = self._scrapear_producto(page, link)
+                datos["consulta"] = query
+                productos.append(datos)
         return productos
 
     # --- pasos internos ---
@@ -100,12 +116,22 @@ class MercadoLibreScraper:
         cuerpo = page.inner_text("body")
         envio_gratis = bool(re.search(r"env[ií]o\s+gratis", cuerpo, re.IGNORECASE))
 
+        vendedor = _limpiar_vendedor(_texto(page, ".ui-seller-data-header__title"))
+        # Las tiendas oficiales enlazan a /tienda/... con 'official_store_id' y
+        # muestran un banner; los vendedores comunes no.
+        tienda_oficial = bool(
+            page.query_selector(".ui-seller-data a[href*='official_store_id=']")
+            or page.query_selector(".ui-seller-data-banner__container")
+        )
+
         return {
             "titulo": titulo,
             "precio": precio,
             "moneda": moneda,
             "envio_gratis": envio_gratis,
             "cantidad_vendida": cantidad_vendida,
+            "vendedor": vendedor,
+            "tienda_oficial": tienda_oficial,
             "link": url,
         }
 
