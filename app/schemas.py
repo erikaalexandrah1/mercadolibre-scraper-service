@@ -117,3 +117,57 @@ class CompareResponse(BaseModel):
     references_processed: int
     total_products: int
     results: list[CompareResultItem]
+
+
+# --- Ordenes pendientes de MercadoEnvios ---
+
+
+class PendingOrder(BaseModel):
+    """
+    Una orden pendiente del Gestor de Ordenes de MercadoEnvios, con todos los
+    datos necesarios para que el backend la registre como Purchase.
+
+    Si 'error' viene seteado, el resto de los campos puede estar incompleto
+    (fallo la extraccion de esa orden puntual; no tumba el resto del batch).
+    """
+
+    ml_order_id: str
+    status: str = "Pendiente"
+    order_date: str = ""
+
+    product_title: str = ""
+    quantity: int = 0
+    product_image_url: str = ""
+    product_ml_url: str = Field("", description="URL publica del producto en MercadoLibre, util para matchear contra Product.mlUrl")
+    total_bs: str = ""
+    total_usd: str = ""
+
+    shipping_company: str = Field("", description="Ej. 'Domesa', 'ZOOM' (texto crudo, sin normalizar)")
+    shipping_method_label: str = ""
+    recipient_name: str = ""
+    recipient_address: str = ""
+    recipient_reference: str = ""
+    recipient_phone: str = ""
+    agency_name: str = ""
+    agency_address: str = ""
+
+    billing_name: str = ""
+    billing_id: str = ""
+
+    payment_type: str = Field("", description="Ej. 'Pago móvil' (texto crudo, sin normalizar)")
+    payment_bank_receiver: str = ""
+    payment_bank_issuer: str = ""
+    payment_reference: str = ""
+    payment_date: str = ""
+    payment_proof_base64: str | None = Field(
+        None, description="Data URI base64 del comprobante de pago (imagen original, no un screenshot)"
+    )
+
+    error: str | None = None
+
+
+class PendingOrdersResponse(BaseModel):
+    """Resumen de una consulta de ordenes pendientes."""
+
+    total: int
+    orders: list[PendingOrder]

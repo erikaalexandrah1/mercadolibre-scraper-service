@@ -52,6 +52,7 @@ Detalles de diseño y restricciones en [AGENTS.md](AGENTS.md).
 | GET    | `/references`         | Lista tu catalogo propio                          |
 | PATCH  | `/references/{ref_id}`| Edita `search_queries` (tags de busqueda) / `active` |
 | POST   | `/compare`            | Compara catalogo vs competencia por imagen        |
+| POST   | `/orders/pending`     | Scrapea el Gestor de Ordenes de MercadoEnvios (pendientes) |
 
 Docs interactivas (Swagger) en `/docs` al levantar el servicio.
 
@@ -91,6 +92,19 @@ curl -X POST http://localhost:8000/scrape/batch \
 `pages` recorre varias paginas de resultados; `max_items` es el tope de
 productos por pagina (una pagina de MercadoLibre trae ~48). Si defines
 `API_KEY`, añade el header `-H "X-API-Key: TU_CLAVE"`.
+
+### Ordenes pendientes de MercadoEnvios
+
+```bash
+curl -X POST http://localhost:8000/orders/pending -H "X-API-Key: TU_CLAVE"
+```
+
+Scrapea `mercadoenvios.com.ve/vendedor/orden?status=pending` (mismo dominio de
+la sesion de ML) y devuelve cada orden pendiente con producto, envio,
+facturacion y datos de pago (comprobante incluido, en base64). No persiste
+nada: es lectura pura, pensada para que un backend la consuma y decida que
+hacer con cada orden. Detalle completo del contrato en
+[BACKEND_INTEGRATION.md](BACKEND_INTEGRATION.md).
 
 ## Correr en local
 

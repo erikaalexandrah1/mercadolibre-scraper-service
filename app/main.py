@@ -23,6 +23,7 @@ from app.comparison import ComparisonService
 from app.catalog import CatalogImporter
 from app.config import Settings, get_settings
 from app.embeddings import ImageEmbedder
+from app.orders_scraper import MercadoEnviosOrdersScraper
 from app.repository import ProductRepository, ReferenceRepository
 from app.schemas import (
     BatchResultItem,
@@ -32,6 +33,8 @@ from app.schemas import (
     CompareResponse,
     CompareResultItem,
     ImportSummary,
+    PendingOrder,
+    PendingOrdersResponse,
     Product,
     Reference,
     ReferenceUpdate,
@@ -288,3 +291,30 @@ def compare(payload: CompareRequest, settings: Settings = Depends(get_settings))
     return CompareResponse(
         references_processed=len(refs), total_products=total_products, results=results
     )
+
+
+# --- Ordenes pendientes de MercadoEnvios ---
+
+
+@app.post(
+    "/orders/pending",
+    response_model=PendingOrdersResponse,
+    dependencies=[Depends(verify_api_key)],
+    tags=["ordenes"],
+)
+def pending_orders(settings: Settings = Depends(get_settings)) -> PendingOrdersResponse:
+    """
+    Scrapea el Gestor de Ordenes de MercadoEnvios (mismo dominio de la sesion
+    de ML) y devuelve TODAS las ordenes pendientes con sus datos de producto,
+    envio/facturacion y pago (incluyendo el comprobante en base64).
+
+    No persiste nada: es lectura pura. El backend consumidor decide que hacer
+    con cada orden (matchear producto, evitar duplicados, crear la Purchase).
+    """
+    try:
+        ordenes = MercadoEnviosOrdersScraper(settings).run()
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e))
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e))
+    return PendingOrdersResponse(total=len(ordenes), orders=[PendingOrder(**o) for o in ordenes])
