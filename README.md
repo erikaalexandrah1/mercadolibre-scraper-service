@@ -53,6 +53,7 @@ Detalles de diseño y restricciones en [AGENTS.md](AGENTS.md).
 | PATCH  | `/references/{ref_id}`| Edita `search_queries` (tags de busqueda) / `active` |
 | POST   | `/compare`            | Compara catalogo vs competencia por imagen        |
 | POST   | `/orders/pending`     | Scrapea el Gestor de Ordenes de MercadoEnvios (pendientes) |
+| POST   | `/shipping-labels/read` | Lee courier/destinatario/telefono/direccion de una foto de guia (OCR local) |
 
 Docs interactivas (Swagger) en `/docs` al levantar el servicio.
 
@@ -105,6 +106,22 @@ facturacion y datos de pago (comprobante incluido, en base64). No persiste
 nada: es lectura pura, pensada para que un backend la consuma y decida que
 hacer con cada orden. Detalle completo del contrato en
 [BACKEND_INTEGRATION.md](BACKEND_INTEGRATION.md).
+
+### Guias de envio (OCR local)
+
+```bash
+curl -X POST http://localhost:8000/shipping-labels/read \
+  -H "X-API-Key: TU_CLAVE" \
+  -F "file=@guia.jpg"
+```
+
+Lee una foto de guia de ZOOM/MRW/Domesa con Tesseract (local, sin CLIP ni
+servicios externos) y devuelve courier, nombre/telefono/direccion del
+destinatario. `ok=false` cuando falta algun campo clave (foto borrosa,
+courier no reconocido) — en ese caso el consumidor NO deberia usar el
+resultado para mandarle algo a un cliente real. Probado y calibrado contra
+guias reales de ZOOM; MRW y Domesa usan el mismo parseo generico pero no
+estan verificadas todavia contra fotos reales.
 
 ## Correr en local
 

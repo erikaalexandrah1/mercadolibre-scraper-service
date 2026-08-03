@@ -5,11 +5,15 @@ pymongo==4.8.0
 pydantic==2.8.2
 pydantic-settings==2.3.4
 httpx==0.27.0
+python-multipart==0.0.9
 # --- Embeddings de imagen (CLIP ViT-B/32) ---
 sentence-transformers==3.0.1
 pillow==10.4.0
 numpy==1.26.4
 # torch se instala aparte (build CPU) en el Dockerfile para no traer CUDA.
 torch==2.3.1
+# --- OCR local de guias de envio (necesita el binario tesseract-ocr del SO,
+#     instalado en el Dockerfile) ---
+pytesseract==0.3.13
 # --- Tests ---
 pytest==8.2.2

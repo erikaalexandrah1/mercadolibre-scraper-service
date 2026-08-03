@@ -173,3 +173,25 @@ class PendingOrdersResponse(BaseModel):
 
     total: int
     orders: list[PendingOrder]
+
+
+# --- Lectura de guias de envio (OCR local) ---
+
+
+class ShippingLabelReadResponse(BaseModel):
+    """
+    Resultado de leer una foto de guia (ZOOM/MRW/Domesa) por OCR local.
+
+    `ok=False` si no se pudieron sacar los 3 datos clave del destinatario
+    (nombre, telefono, direccion) o no se reconocio el courier — en ese caso
+    el llamador NO deberia usar estos datos para mandarle algo a un cliente
+    real, y en cambio pedir revision manual.
+    """
+
+    ok: bool
+    courier: str = Field("", description="'zoom' | 'mrw' | 'domesa' | '' si no se reconocio")
+    recipient_name: str = ""
+    recipient_phone: str = ""
+    recipient_address: str = ""
+    missing_fields: list[str] = Field(default_factory=list)
+    raw_text: str = Field("", description="Texto crudo del OCR, util para depurar cuando falla el parseo")

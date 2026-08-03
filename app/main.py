@@ -13,12 +13,18 @@ Rutas:
   PATCH /references/{ref_id}    -> edita search_queries / active
   POST  /compare                -> compara catalogo vs competencia por imagen
 
+  Ordenes pendientes de MercadoEnvios:
+  POST  /orders/pending         -> scrapea el Gestor de Ordenes
+
+  Guias de envio (OCR local, sin CLIP ni servicios externos):
+  POST  /shipping-labels/read   -> lee courier/destinatario/telefono/direccion de una foto
+
 Las rutas de scraping/comparacion son sincronas: FastAPI las corre en un
 threadpool, evitando bloquear el event loop con Playwright y CLIP (CPU).
 """
 import logging
 
-from fastapi import Depends, FastAPI, Header, HTTPException, status
+from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile, status
 
 from app import __version__
 from app.comparison import ComparisonService
@@ -42,8 +48,10 @@ from app.schemas import (
     ReferenceUpdate,
     ScrapeRequest,
     ScrapeResponse,
+    ShippingLabelReadResponse,
 )
 from app.scraper import MercadoLibreScraper
+from app.shipping_label import ShippingLabelReader
 
 logger = logging.getLogger("app.main")
 
@@ -326,3 +334,41 @@ def pending_orders(settings: Settings = Depends(get_settings)) -> PendingOrdersR
         logger.exception(f"/orders/pending fallo: {e}")
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e))
     return PendingOrdersResponse(total=len(ordenes), orders=[PendingOrder(**o) for o in ordenes])
+
+
+# --- Guias de envio (OCR local) ---
+
+
+@app.post(
+    "/shipping-labels/read",
+    response_model=ShippingLabelReadResponse,
+    dependencies=[Depends(verify_api_key)],
+    tags=["guias"],
+)
+def read_shipping_label(file: UploadFile = File(...)) -> ShippingLabelReadResponse:
+    """
+    Lee una foto de guia (ZOOM/MRW/Domesa) con OCR local (Tesseract, sin CLIP
+    ni servicios externos) y extrae courier, nombre, telefono y direccion del
+    destinatario.
+
+    `ok=False` cuando falta algun campo clave (foto borrosa/torcida, courier
+    no reconocido, etc.) — en ese caso NO se debe usar el resultado para
+    mandarle algo a un cliente real; el `raw_text` sirve para depurar por que
+    fallo el parseo.
+    """
+    try:
+        data = file.file.read()
+        resultado = ShippingLabelReader().read_bytes(data)
+    except Exception as e:  # noqa: BLE001
+        logger.exception(f"/shipping-labels/read fallo: {e}")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"No se pudo leer la imagen: {e}")
+
+    return ShippingLabelReadResponse(
+        ok=resultado.ok,
+        courier=resultado.courier,
+        recipient_name=resultado.recipient_name,
+        recipient_phone=resultado.recipient_phone,
+        recipient_address=resultado.recipient_address,
+        missing_fields=resultado.missing_fields,
+        raw_text=resultado.raw_text,
+    )
