@@ -22,9 +22,9 @@ from app.config import Settings
 from app.shipping_messages import mensajes_para_courier
 
 VENTAS_URL = "https://www.mercadolibre.com.ve/ventas/omni/listado"
-# Cuanto esperar a que el boton de enviar deje de estar disabled (adjuntar
-# o tipear dispara un re-render de React que lo habilita).
-_ESPERA_BOTON_HABILITADO_MS = 8_000
+# Cuanto esperar a que el chat termine de re-renderizar tras adjuntar/enviar
+# (el boton de enviar deja de estar disabled, el textarea se vuelve a montar).
+_ESPERA_UI_MS = 8_000
 
 
 class MlMessagingError(Exception):
@@ -114,25 +114,29 @@ class MlMessagingService:
         # OJO: la pagina tiene OTRO input[type=file] escondido en el menu de
         # usuario (el de "Cambiar foto" del nav, presente en cualquier pagina
         # logueada) que aparece ANTES en el DOM. Hay que acotar al del chat.
-        input_archivo = page.query_selector('.message-input-box input[type="file"]')
-        if not input_archivo:
-            raise MlMessagingError("No se encontro el input de adjuntar archivo en el chat.")
-
+        input_archivo = self._esperar_selector(page, '.message-input-box input[type="file"]', "el input de adjuntar archivo en el chat")
         input_archivo.set_input_files({"name": "guia.jpg", "mimeType": "image/jpeg", "buffer": image_bytes})
         self._esperar_boton_habilitado_y_enviar(page)
 
     def _enviar_texto(self, page: Page, texto: str) -> None:
-        textarea = page.query_selector('textarea[placeholder="Escríbele al comprador"]')
-        if not textarea:
-            raise MlMessagingError("No se encontro el campo de texto del chat.")
-
+        # OJO: tras mandar el adjunto (o el mensaje anterior), React re-renderiza
+        # el chat y el <textarea> se desmonta y vuelve a montar; si lo buscamos
+        # con query_selector en ese instante puede no existir todavia. Por eso
+        # esperamos a que reaparezca en vez de asumir que ya esta.
+        textarea = self._esperar_selector(page, 'textarea[placeholder="Escríbele al comprador"]', "el campo de texto del chat")
         textarea.fill(texto)
         self._esperar_boton_habilitado_y_enviar(page)
+
+    def _esperar_selector(self, page: Page, selector: str, descripcion: str):
+        try:
+            return page.wait_for_selector(selector, timeout=_ESPERA_UI_MS)
+        except Exception as e:
+            raise MlMessagingError(f"No se encontro {descripcion} (timeout esperandolo).") from e
 
     def _esperar_boton_habilitado_y_enviar(self, page: Page) -> None:
         try:
             page.wait_for_selector(
-                "#messageInputSubmit:not([disabled])", timeout=_ESPERA_BOTON_HABILITADO_MS
+                "#messageInputSubmit:not([disabled])", timeout=_ESPERA_UI_MS
             )
         except Exception as e:
             raise MlMessagingError(
