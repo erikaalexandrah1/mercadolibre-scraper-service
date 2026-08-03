@@ -17,16 +17,21 @@ quien decide que hacer con cada orden (matchear producto, evitar duplicados,
 crear la Purchase).
 """
 import base64
+import logging
 import re
 
-from playwright.sync_api import ElementHandle, Page
+from playwright.sync_api import BrowserContext, ElementHandle, Page
 
 from app.browser import browser_context
 from app.config import Settings
 from app.scraper import _sin_duplicados
 
+logger = logging.getLogger(__name__)
+
 BASE = "https://www.mercadoenvios.com.ve"
 LISTA_URL = f"{BASE}/vendedor/orden?status=pending"
+DASHBOARD_URL = f"{BASE}/vendedor/dashboard"
+_TEXTO_BOTON_SSO = "Ingresar con mi cuenta de Mercado Libre"
 
 
 def _texto(nodo, selector: str) -> str:
@@ -93,7 +98,7 @@ class MercadoEnviosOrdersScraper:
         ordenes: list[dict] = []
         with browser_context(self._settings) as context:
             page = context.new_page()
-            hrefs = self._listar_pendientes(page)
+            hrefs = self._listar_pendientes(page, context)
             for href in hrefs:
                 try:
                     ordenes.append(self._extraer_detalle(page, href))
@@ -103,16 +108,25 @@ class MercadoEnviosOrdersScraper:
 
     # --- lista ---
 
-    def _listar_pendientes(self, page: Page) -> list[str]:
+    def _listar_pendientes(self, page: Page, context: BrowserContext) -> list[str]:
         page.goto(LISTA_URL, wait_until="domcontentloaded")
         page.wait_for_timeout(2500)
 
         if not page.query_selector("melienvios-vendedor-orden-lista-page"):
-            raise RuntimeError(
-                "No se encontro el Gestor de Ordenes. La sesion pudo expirar o no "
-                "incluye mercadoenvios.com.ve; regenera storage_state.json con "
-                "scripts/login.py (logueandote tambien ahi)."
-            )
+            if not self._reconectar_sesion_mercadoenvios(page, context):
+                raise RuntimeError(
+                    "No se encontro el Gestor de Ordenes y no se pudo re-vincular "
+                    "mercadoenvios.com.ve automaticamente (la sesion de Mercado Libre "
+                    "tambien parece haber expirado); regenera storage_state.json con "
+                    "scripts/login.py (logueandote tambien ahi)."
+                )
+            page.goto(LISTA_URL, wait_until="domcontentloaded")
+            page.wait_for_timeout(2500)
+            if not page.query_selector("melienvios-vendedor-orden-lista-page"):
+                raise RuntimeError(
+                    "Se re-vinculo mercadoenvios.com.ve pero el Gestor de Ordenes "
+                    "sigue sin aparecer; puede que haya cambiado la interfaz."
+                )
 
         # Mostrar el maximo por pagina para minimizar la paginacion.
         selector_cantidad = page.query_selector("select#numberPerPage")
@@ -129,6 +143,37 @@ class MercadoEnviosOrdersScraper:
             if not self._ir_siguiente_pagina(page):
                 break
         return _sin_duplicados(hrefs)
+
+    def _reconectar_sesion_mercadoenvios(self, page: Page, context: BrowserContext) -> bool:
+        """
+        La sesion de mercadoenvios.com.ve puede vencer por separado de la de
+        mercadolibre.com.ve (dominio distinto, cookies distintas). Si la sesion
+        de ML sigue viva, re-vincularla es solo un click en el boton amarillo
+        de SSO ("Ingresar con mi cuenta de Mercado Libre") — sin captcha ni
+        login manual. Si el boton no aparece, es que la sesion de ML tambien
+        vencio y hace falta correr scripts/login.py de nuevo a mano.
+
+        Si funciona, persiste la sesion refrescada en storage_state_path para
+        que las proximas corridas ya la reutilicen sin repetir este paso.
+        """
+        page.goto(DASHBOARD_URL, wait_until="domcontentloaded")
+        page.wait_for_timeout(2500)
+
+        boton = page.get_by_text(_TEXTO_BOTON_SSO, exact=False)
+        if boton.count() == 0:
+            return False
+
+        logger.warning("Sesion de mercadoenvios vencida; re-vinculando via SSO con la sesion de ML existente...")
+        boton.first.click()
+        page.wait_for_timeout(4000)
+
+        try:
+            context.storage_state(path=self._settings.storage_state_path)
+            logger.warning(f"Sesion de mercadoenvios re-vinculada; storage_state guardado en '{self._settings.storage_state_path}'.")
+        except Exception as e:  # noqa: BLE001 - no debe tumbar la corrida actual si falla al persistir
+            logger.warning(f"No se pudo persistir la sesion de mercadoenvios refrescada: {e}")
+
+        return True
 
     def _ir_siguiente_pagina(self, page: Page) -> bool:
         boton = page.query_selector(
