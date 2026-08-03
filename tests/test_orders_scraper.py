@@ -7,6 +7,7 @@ from app.orders_scraper import (
     _parse_fecha_venta,
     _parse_monto,
     _split_label_value,
+    _username_de_href_perfil,
 )
 
 
@@ -68,3 +69,21 @@ def test_orden_id_de_href_absoluta():
 
 def test_orden_id_de_href_sin_match():
     assert _orden_id_de_href("/vendedor/dashboard") == ""
+
+
+def test_username_de_href_perfil():
+    assert (
+        _username_de_href_perfil("https://www.mercadolibre.com.ve/perfil/comprador/ALLANCARVAJAL")
+        == "ALLANCARVAJAL"
+    )
+
+
+def test_username_de_href_perfil_con_query():
+    assert (
+        _username_de_href_perfil("https://www.mercadolibre.com.ve/perfil/comprador/K-MILIN?from=x")
+        == "K-MILIN"
+    )
+
+
+def test_username_de_href_perfil_sin_match():
+    assert _username_de_href_perfil("https://www.mercadolibre.com.ve/otra-cosa") == ""

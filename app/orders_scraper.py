@@ -76,6 +76,12 @@ def _orden_id_de_href(href: str) -> str:
     return m.group(1) if m else ""
 
 
+def _username_de_href_perfil(href: str) -> str:
+    """De '.../perfil/comprador/ALLANCARVAJAL' saca 'ALLANCARVAJAL'."""
+    m = re.search(r"/perfil/comprador/([^/?#]+)", href or "")
+    return m.group(1) if m else ""
+
+
 class MercadoEnviosOrdersScraper:
     """Scraper del Gestor de Ordenes de MercadoEnvios (pedidos pendientes)."""
 
@@ -165,6 +171,7 @@ class MercadoEnviosOrdersScraper:
             "ml_order_id": _orden_id_de_href(href),
             "status": "Pendiente",
             **self._extraer_producto(page),
+            **self._extraer_comprador(page),
             **self._extraer_envio(page),
             **self._extraer_factura(page),
             **self._extraer_pago(page, comprobante_urls[-1] if comprobante_urls else None),
@@ -184,6 +191,25 @@ class MercadoEnviosOrdersScraper:
             "total_bs": _parse_monto(_texto(bloque, ".product-price h3")),
             "total_usd": _parse_monto(_texto(bloque, ".product-price h4")),
         }
+
+    def _extraer_comprador(self, page: Page) -> dict:
+        """
+        Username del comprador (ej. 'ALLANCARVAJAL'), necesario para poder
+        ubicarlo despues en mercadolibre.com.ve/ventas/omni/listado (esa
+        pagina se busca por username, no por nombre completo enmascarado).
+        """
+        bloque = page.query_selector(".comprador-details")
+        if not bloque:
+            return {"buyer_username": ""}
+
+        username = _username_de_href_perfil(_attr(bloque, "a.custom-link-order", "href"))
+        if not username:
+            # Respaldo: parsear el texto "Usuario: ALGO" si el link cambia de forma.
+            texto = _texto(bloque, ".comprador-datos")
+            m = re.search(r"Usuario:\s*(\S+)", texto)
+            username = m.group(1) if m else ""
+
+        return {"buyer_username": username}
 
     def _extraer_envio(self, page: Page) -> dict:
         bloque = self._bloque_por_titulo(page, "Método de envío")

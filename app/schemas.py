@@ -142,6 +142,8 @@ class PendingOrder(BaseModel):
     total_bs: str = ""
     total_usd: str = ""
 
+    buyer_username: str = Field("", description="Username de MercadoLibre del comprador (ej. 'ALLANCARVAJAL'). Sirve para ubicarlo en mercadolibre.com.ve/ventas/omni/listado, que se busca por username y no por el nombre enmascarado.")
+
     shipping_company: str = Field("", description="Ej. 'Domesa', 'ZOOM' (texto crudo, sin normalizar)")
     shipping_method_label: str = ""
     recipient_name: str = ""
