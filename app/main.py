@@ -16,6 +16,8 @@ Rutas:
 Las rutas de scraping/comparacion son sincronas: FastAPI las corre en un
 threadpool, evitando bloquear el event loop con Playwright y CLIP (CPU).
 """
+import logging
+
 from fastapi import Depends, FastAPI, Header, HTTPException, status
 
 from app import __version__
@@ -42,6 +44,8 @@ from app.schemas import (
     ScrapeResponse,
 )
 from app.scraper import MercadoLibreScraper
+
+logger = logging.getLogger("app.main")
 
 app = FastAPI(
     title="MercadoLibre Scraper Service",
@@ -314,7 +318,11 @@ def pending_orders(settings: Settings = Depends(get_settings)) -> PendingOrdersR
     try:
         ordenes = MercadoEnviosOrdersScraper(settings).run()
     except FileNotFoundError as e:
+        logger.warning(f"/orders/pending: sesion no encontrada: {e}")
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e))
     except Exception as e:  # noqa: BLE001
+        # Cloudflare reemplaza el body de las respuestas 502 por su propia
+        # pagina de error, asi que el detalle solo queda visible en estos logs.
+        logger.exception(f"/orders/pending fallo: {e}")
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e))
     return PendingOrdersResponse(total=len(ordenes), orders=[PendingOrder(**o) for o in ordenes])
