@@ -26,11 +26,20 @@ from PIL import Image
 # Telefono venezolano tipico: 04XX-XXXXXXX (con o sin separadores).
 _TELEFONO_RE = re.compile(r"0\d{3}[\s.\-]?\d{3}[\s.\-]?\d{2}[\s.\-]?\d{2}")
 
+# Etiqueta 'DEST:' de MRW: la D inicial sale confundida seguido (ej. 'pesT:'),
+# por eso se tolera cualquier letra + 'es' + T/L. El ':' es obligatorio para
+# no matchear por accidente dentro de 'DESTINO:' (el bloque de la oficina de
+# entrega, que es OTRO campo).
+_MRW_DEST_LABEL = r"[A-Za-z]es[TtLl]:"
+
 _COURIER_PATTERNS: dict[str, re.Pattern] = {
     # 'ZOOM' sale seguido como 'Z00M', '¿00M' o incluso '200M' en el OCR
     # (confunde O con 0, y la Z con ¿, ? o 2 segun la foto).
     "zoom": re.compile(r"[Z2¿?][O0]{2}M", re.IGNORECASE),
-    "mrw": re.compile(r"\bMRW\b", re.IGNORECASE),
+    # El logo 'MRW' de la bolsa es un watermark diagonal, no texto plano: el
+    # OCR casi nunca lo lee. Se reconoce por jerga propia de su formato de
+    # guia en vez de depender de la sigla.
+    "mrw": re.compile(r"\bMRW\b|ENSACADO|CUPONES|COBRO EN DESTINO", re.IGNORECASE),
     "domesa": re.compile(r"DOMESA", re.IGNORECASE),
 }
 
@@ -74,8 +83,12 @@ class ShippingLabelReader:
 
     def _parsear(self, texto: str) -> LabelReadResult:
         courier = self._extraer_courier(texto)
-        nombre, telefono = self._extraer_destinatario(texto)
-        direccion = self._extraer_destino(texto)
+        if courier == "mrw":
+            nombre, telefono = self._extraer_destinatario_mrw(texto)
+            direccion = self._extraer_destino_mrw(texto)
+        else:
+            nombre, telefono = self._extraer_destinatario(texto)
+            direccion = self._extraer_destino(texto)
 
         faltantes = []
         if not courier:
@@ -124,6 +137,55 @@ class ShippingLabelReader:
         telefonos = _TELEFONO_RE.findall(m.group(2))
         telefono = telefonos[0] if telefonos else ""
         return nombre, telefono
+
+    def _extraer_destinatario_mrw(self, texto: str) -> tuple[str, str]:
+        """
+        MRW usa un formato de campos distinto al de Zoom/Domesa: el nombre
+        viene en 'DEST: WILLIAM AULAR V-11820181' (nombre + cedula, sin
+        telefono ahi), y el telefono del destinatario esta pegado al bloque
+        anterior de 'DESTINO:' (la oficina/direccion de entrega), no al
+        nombre. El TLF que aparece ANTES de 'DESTINO:' es el del remitente,
+        no nos sirve.
+        """
+        m_nombre = re.search(
+            _MRW_DEST_LABEL + r"\s*([A-ZÁÉÍÓÚÑa-záéíóúñ][A-Za-zÁÉÍÓÚÑáéíóúñ .]+?)\s*[VEve][-.]?\d{6,9}",
+            texto,
+            re.IGNORECASE,
+        )
+        nombre = re.sub(r"\s+", " ", m_nombre.group(1)).strip() if m_nombre else ""
+
+        telefono = ""
+        m_bloque = re.search(r"DESTINO:(.+?)" + _MRW_DEST_LABEL, texto, re.DOTALL | re.IGNORECASE)
+        if m_bloque:
+            telefonos = _TELEFONO_RE.findall(m_bloque.group(1))
+            telefono = telefonos[0] if telefonos else ""
+
+        return nombre, telefono
+
+    def _extraer_destino_mrw(self, texto: str) -> str:
+        """
+        OJO: en la foto de prueba, Tesseract mezclo el orden de lectura entre
+        columnas (multi-columna con precios al lado) y el texto que sigue a
+        'DIR:' quedo partido/incompleto. Lo que SI queda pegado de forma
+        confiable es el resto de la direccion justo despues del nombre+cedula
+        (' DEST: NOMBRE V-12345678'), asi que se ancla ahi en vez de en 'DIR:'.
+        Termina en el codigo postal ('CP ...') o en la seccion de tipo de
+        envio ('TIPO:').
+        """
+        m_dest = re.search(
+            _MRW_DEST_LABEL + r"\s*[A-ZÁÉÍÓÚÑa-záéíóúñ][A-Za-zÁÉÍÓÚÑáéíóúñ .]+?\s*[VEve][-.]?\d{6,9}",
+            texto,
+            re.IGNORECASE,
+        )
+        resto = texto[m_dest.end():] if m_dest else texto
+
+        m = re.search(r"(.+?)(?:\bCP\b|TIPO)", resto, re.DOTALL | re.IGNORECASE)
+        if not m:
+            m = re.search(r"(.+?)(?:\n\s*\n|\Z)", resto, re.DOTALL)
+        if not m:
+            return ""
+        direccion = re.sub(r"\s*\n\s*", " ", m.group(1))
+        return re.sub(r"\s+", " ", direccion).strip()
 
     def _extraer_destino(self, texto: str) -> str:
         """

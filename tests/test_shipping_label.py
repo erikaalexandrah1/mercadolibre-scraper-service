@@ -134,3 +134,95 @@ def test_resultado_ok_guia_3():
     resultado = reader._parsear(_OCR_ZOOM_3_Z_COMO_2_Y_T_COMO_L)
     assert resultado.ok is True
     assert resultado.missing_fields == []
+
+
+# Foto real de una guia de MRW. Formato totalmente distinto a Zoom: 'DEST:'
+# (no 'Destinatario:') trae nombre+cedula sin telefono, y el telefono del
+# destinatario esta pegado al bloque anterior 'DESTINO:' (oficina de
+# entrega), no al nombre. El logo 'MRW' es un watermark, no sale como texto.
+_OCR_MRW_1 = """Y
+
+CRiN
+
+TR
+012000511000773
+
+UA
+
+R2RARD4 | 114241
+DESTINO: RETIRAR POR OF ICIMA
+0511000 TURMERO ZONA
+
+1 .
+INDUSTRIAL
+
+SEMITENTE LAURA ZURILLA
+
+=o0 GEN n:i20600 A IoRrEiNa
+ORISEN 1 20694 LA UREIMA
+
+1LF:04125913710
+
+pesT: WILLIAM AULAR V-11820181
+
+IRMERO, C.C. INTI RCOMUNAL CENTER LOCAL NR
+PRE SECTOR LA MORITA TURMERO, TURMERO PQ: SAMAN DE GUERE MNCP
+SANTIAGO MARIÑO EDO: ARAGUA CP 1P -10-237-25-101.
+npo: SOBRE 500
+
+RECIO CUP: BS.
+
+1.500,58
+
+Cm: BS.646,801P 8%: B
+MD: BS.539,00 R: BS.0.0D0
+
+DIR: av INTERCOMUNAL MARACAY T
+
+S.77,62
+
+PESO
+0.151 KG
+
+GERO EN DESTINO
+BS. 2763.99
+
+CANT. CUPONES. 1
+TRACKING 012000511000773
+ENSACADO PARA (MARACAY)
+"""
+
+
+def test_courier_mrw_por_jerga_cuando_no_sale_la_sigla():
+    reader = ShippingLabelReader()
+    resultado = reader._parsear(_OCR_MRW_1)
+    assert resultado.courier == "mrw"
+
+
+def test_destinatario_mrw_nombre_desde_dest():
+    reader = ShippingLabelReader()
+    resultado = reader._parsear(_OCR_MRW_1)
+    assert resultado.recipient_name == "WILLIAM AULAR"
+
+
+def test_destinatario_mrw_telefono_pegado_al_bloque_destino():
+    reader = ShippingLabelReader()
+    resultado = reader._parsear(_OCR_MRW_1)
+    assert resultado.recipient_phone == "04125913710"
+
+
+def test_direccion_mrw_tras_el_nombre_y_cedula():
+    reader = ShippingLabelReader()
+    resultado = reader._parsear(_OCR_MRW_1)
+    # El OCR mezclo el orden de columnas y partio el texto que sigue a "DIR:";
+    # lo que si queda pegado de forma confiable es el resto de la direccion
+    # justo despues del nombre+cedula del destinatario.
+    assert "TURMERO" in resultado.recipient_address
+    assert "ARAGUA" in resultado.recipient_address
+
+
+def test_resultado_ok_guia_mrw():
+    reader = ShippingLabelReader()
+    resultado = reader._parsear(_OCR_MRW_1)
+    assert resultado.ok is True
+    assert resultado.missing_fields == []
