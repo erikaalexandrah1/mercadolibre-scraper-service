@@ -111,7 +111,10 @@ class MlMessagingService:
     # --- chat de la venta ---
 
     def _adjuntar_y_enviar_imagen(self, page: Page, image_bytes: bytes) -> None:
-        input_archivo = page.query_selector('input[type="file"]')
+        # OJO: la pagina tiene OTRO input[type=file] escondido en el menu de
+        # usuario (el de "Cambiar foto" del nav, presente en cualquier pagina
+        # logueada) que aparece ANTES en el DOM. Hay que acotar al del chat.
+        input_archivo = page.query_selector('.message-input-box input[type="file"]')
         if not input_archivo:
             raise MlMessagingError("No se encontro el input de adjuntar archivo en el chat.")
 
