@@ -86,6 +86,9 @@ class ShippingLabelReader:
         if courier == "mrw":
             nombre, telefono = self._extraer_destinatario_mrw(texto)
             direccion = self._extraer_destino_mrw(texto)
+        elif courier == "domesa":
+            nombre, telefono = self._extraer_destinatario_domesa(texto)
+            direccion = self._extraer_destino_domesa(texto)
         else:
             nombre, telefono = self._extraer_destinatario(texto)
             direccion = self._extraer_destino(texto)
@@ -182,6 +185,40 @@ class ShippingLabelReader:
         m = re.search(r"(.+?)(?:\bCP\b|TIPO)", resto, re.DOTALL | re.IGNORECASE)
         if not m:
             m = re.search(r"(.+?)(?:\n\s*\n|\Z)", resto, re.DOTALL)
+        if not m:
+            return ""
+        direccion = re.sub(r"\s*\n\s*", " ", m.group(1))
+        return re.sub(r"\s+", " ", direccion).strip()
+
+    def _extraer_destinatario_domesa(self, texto: str) -> tuple[str, str]:
+        """
+        Domesa trae nombre, cedula y telefono todos juntos en una sola linea:
+        'Destinatario: Alln Vicente Carvajal Castellanos, V-V13601602,
+        04244092227' — separados por comas. Nos quedamos con lo que hay antes
+        de la primera coma como nombre, y buscamos el telefono en todo el
+        bloque (mas confiable que asumir su posicion exacta, porque el OCR a
+        veces parte el numero de cedula a mitad con un salto de linea).
+        """
+        m = re.search(r"Destinatario:?\s*(.+?)Detalles del Env", texto, re.DOTALL | re.IGNORECASE)
+        if not m:
+            return "", ""
+
+        bloque = re.sub(r"\s+", " ", m.group(1)).strip()
+        nombre = bloque.split(",")[0].strip()
+        telefonos = _TELEFONO_RE.findall(bloque)
+        telefono = telefonos[0] if telefonos else ""
+        return nombre, telefono
+
+    def _extraer_destino_domesa(self, texto: str) -> str:
+        """
+        La direccion de destino viene bajo 'Localidad:' (dentro del bloque
+        'Direccion Destino:') y termina en el codigo postal 'ZP: NNNN'. OJO:
+        el remitente tambien tiene su propia 'Direccion Origen' que termina
+        en su propio 'ZP: NNNN' mas abajo — como se busca el primer 'ZP:'
+        despues de 'Localidad:', se agarra el del destinatario, no el del
+        remitente.
+        """
+        m = re.search(r"Localidad:?\s*(.+?ZP:\s*\d+)", texto, re.DOTALL | re.IGNORECASE)
         if not m:
             return ""
         direccion = re.sub(r"\s*\n\s*", " ", m.group(1))

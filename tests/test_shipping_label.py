@@ -226,3 +226,106 @@ def test_resultado_ok_guia_mrw():
     resultado = reader._parsear(_OCR_MRW_1)
     assert resultado.ok is True
     assert resultado.missing_fields == []
+
+
+# Foto real de una guia de Domesa (formulario impreso, buena calidad). Nombre,
+# cedula y telefono vienen juntos separados por comas en una sola linea, y la
+# direccion esta bajo 'Localidad:' terminando en 'ZP: NNNN'. Hay DOS 'ZP:' en
+# el documento (destino y origen del remitente); hay que agarrar el primero.
+_OCR_DOMESA_1 = """Documentos Mercantiles, S.A
+
+MW DOMESA SH GUÍA DE PORTE SERVICIO MASIVO
+sl e DDD
+
+Av. Sur 4 con Calle 100 Esquina Puente Soublette, Edif. DOMESA, Parroquia Santa Teresa.
+Caracas — Venezuela. Teléfono: 0 501 Domesa 0 (0 501 366372 0). www.domesa.com.ve
+
+R.I.F.: J-00091991-7. CONCESIÓN POSTAL N* 10-09
+Origen: ML - 6000
+
+11010 CCS
+
+CARACAS - DISTRITO CAPITAL
+Consignación
+
+560000201780
+Destino: AA - 1011
+
+22225 PTC |
+PUERTO CABELLO - CARABOBO
+
+Destinatario: Alln Vicente Carvajal Castellanos, V-
+V13601602, 04244092227
+
+Detalles del Envío
+_Peso | Peso Volumétrico
+Físico(K9g) | (kg) | Largo(em) |  Atto(cm) | Ancho(em) |
+01-08-2026 0,02 o
+
+[e] [e] 0
+| recinto | envase | tipodeemase |
+
+Valor Declarado Bs. Protección Plus Bs. Monto Servicio Bs.
+0 0 0
+
+Remitente
+Erika Alexandra Hernandez Zurilla, V-V24436874, 04142403386
+
+Dirección Localidad: SECTOR S/N, CALLE PLAZA
+
+Destino: ENTRE CALLE BERMUDEZ Y REGENERACI,
+Inmueble: C.C. PROFESIONAL PLAZA,
+GALERIA PLAZA, NIVEL S/N, LOCAL N*29M-
+2, Parroquia: Juan José Flores, Municipio:
+Puerto Cabello, Ciudad/Pueblo: Puerto Cabello,
+Estado: Carabobo, ZP: 2050
+
+N/A
+
+Punto de
+Referencia:
+
+Prueba de Entrega
+
+Remitente:
+
+Dirección Parroquia: Petare, Municipio: Sucre, Ciudad/Pueblo: Caracas, Estado: Distrito
+Origen: Capital, ZP: 1073
+
+|
+Punto de La California
+Referencia:
+"""
+
+
+def test_courier_domesa():
+    reader = ShippingLabelReader()
+    resultado = reader._parsear(_OCR_DOMESA_1)
+    assert resultado.courier == "domesa"
+
+
+def test_destinatario_domesa_nombre_antes_de_la_primera_coma():
+    reader = ShippingLabelReader()
+    resultado = reader._parsear(_OCR_DOMESA_1)
+    assert resultado.recipient_name == "Alln Vicente Carvajal Castellanos"
+
+
+def test_destinatario_domesa_telefono():
+    reader = ShippingLabelReader()
+    resultado = reader._parsear(_OCR_DOMESA_1)
+    assert resultado.recipient_phone == "04244092227"
+
+
+def test_direccion_domesa_agarra_el_zp_del_destino_no_el_del_remitente():
+    reader = ShippingLabelReader()
+    resultado = reader._parsear(_OCR_DOMESA_1)
+    assert "PUERTO CABELLO" in resultado.recipient_address.upper() or "GALERIA PLAZA" in resultado.recipient_address.upper()
+    assert "2050" in resultado.recipient_address
+    assert "1073" not in resultado.recipient_address
+
+
+def test_resultado_ok_guia_domesa():
+    reader = ShippingLabelReader()
+    resultado = reader._parsear(_OCR_DOMESA_1)
+    assert resultado.ok is True
+    assert resultado.missing_fields == []
