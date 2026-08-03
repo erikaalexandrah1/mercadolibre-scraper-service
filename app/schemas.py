@@ -195,3 +195,16 @@ class ShippingLabelReadResponse(BaseModel):
     recipient_address: str = ""
     missing_fields: list[str] = Field(default_factory=list)
     raw_text: str = Field("", description="Texto crudo del OCR, util para depurar cuando falla el parseo")
+
+
+class SendShippingGuideResponse(BaseModel):
+    """
+    Resultado de mandarle la guia + mensaje a un comprador por su chat real
+    de Mercado Libre. `ok=False` con `error` describiendo por que no se pudo
+    (comprador no encontrado, ambiguo, botón de enviar nunca se habilitó,
+    etc.) — nunca se manda algo a medias sin avisar.
+    """
+
+    ok: bool
+    messages_sent: int = 0
+    error: str | None = None

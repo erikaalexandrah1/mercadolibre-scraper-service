@@ -123,6 +123,23 @@ resultado para mandarle algo a un cliente real. Probado y calibrado contra
 guias reales de ZOOM; MRW y Domesa usan el mismo parseo generico pero no
 estan verificadas todavia contra fotos reales.
 
+### Enviar la guia por el chat real del comprador
+
+```bash
+curl -X POST http://localhost:8000/orders/send-shipping-guide \
+  -H "X-API-Key: TU_CLAVE" \
+  -F "buyer_username=ALLANCARVAJAL" \
+  -F "courier=zoom" \
+  -F "file=@guia.jpg"
+```
+
+Ubica al comprador por username en `ventas/omni/listado`, entra a su chat
+real, adjunta la foto y manda el mensaje del courier (partido automatico si
+supera 340 caracteres). Le escribe a un CLIENTE REAL — si el comprador no
+aparece, aparece mas de una vez, o el chat de ML cambio de interfaz y el
+boton de enviar nunca se habilita, devuelve `ok:false` con el detalle en
+`error` en vez de mandar algo a medias o a la persona equivocada.
+
 ## Correr en local
 
 Necesitas Docker (para Mongo) y Python 3.10+.

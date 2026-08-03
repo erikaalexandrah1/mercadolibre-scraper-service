@@ -17,20 +17,22 @@ Rutas:
   POST  /orders/pending         -> scrapea el Gestor de Ordenes
 
   Guias de envio (OCR local, sin CLIP ni servicios externos):
-  POST  /shipping-labels/read   -> lee courier/destinatario/telefono/direccion de una foto
+  POST  /shipping-labels/read        -> lee courier/destinatario/telefono/direccion de una foto
+  POST  /orders/send-shipping-guide  -> adjunta la guia y manda el mensaje por el chat REAL del comprador
 
 Las rutas de scraping/comparacion son sincronas: FastAPI las corre en un
 threadpool, evitando bloquear el event loop con Playwright y CLIP (CPU).
 """
 import logging
 
-from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile, status
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile, status
 
 from app import __version__
 from app.comparison import ComparisonService
 from app.catalog import CatalogImporter
 from app.config import Settings, get_settings
 from app.embeddings import ImageEmbedder
+from app.ml_messaging import MlMessagingError, MlMessagingService
 from app.orders_scraper import MercadoEnviosOrdersScraper
 from app.repository import ProductRepository, ReferenceRepository
 from app.schemas import (
@@ -48,6 +50,7 @@ from app.schemas import (
     ReferenceUpdate,
     ScrapeRequest,
     ScrapeResponse,
+    SendShippingGuideResponse,
     ShippingLabelReadResponse,
 )
 from app.scraper import MercadoLibreScraper
@@ -372,3 +375,40 @@ def read_shipping_label(file: UploadFile = File(...)) -> ShippingLabelReadRespon
         missing_fields=resultado.missing_fields,
         raw_text=resultado.raw_text,
     )
+
+
+@app.post(
+    "/orders/send-shipping-guide",
+    response_model=SendShippingGuideResponse,
+    dependencies=[Depends(verify_api_key)],
+    tags=["guias"],
+)
+def send_shipping_guide(
+    buyer_username: str = Form(...),
+    courier: str = Form(...),
+    file: UploadFile = File(...),
+    settings: Settings = Depends(get_settings),
+) -> SendShippingGuideResponse:
+    """
+    Ubica al comprador por username en ventas/omni/listado, entra a su chat
+    real, adjunta la foto de la guia y manda el mensaje del courier
+    (partido automaticamente si supera el limite de caracteres del chat).
+
+    Esto le escribe a un CLIENTE REAL. Si el comprador no aparece, aparece
+    mas de una vez (ambiguo), o el boton de enviar nunca se habilita, se
+    corta con `ok=false` y el detalle en `error` — nunca se manda algo a
+    medias ni se adivina el destinatario.
+    """
+    try:
+        image_bytes = file.file.read()
+        resultado = MlMessagingService(settings).send_shipping_guide(buyer_username, courier, image_bytes)
+        return SendShippingGuideResponse(**resultado)
+    except MlMessagingError as e:
+        logger.warning(f"/orders/send-shipping-guide: {e}")
+        return SendShippingGuideResponse(ok=False, messages_sent=0, error=str(e))
+    except FileNotFoundError as e:
+        logger.warning(f"/orders/send-shipping-guide: sesion no encontrada: {e}")
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e))
+    except Exception as e:  # noqa: BLE001
+        logger.exception(f"/orders/send-shipping-guide fallo: {e}")
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e))
