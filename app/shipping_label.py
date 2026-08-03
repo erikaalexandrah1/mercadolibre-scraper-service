@@ -27,8 +27,9 @@ from PIL import Image
 _TELEFONO_RE = re.compile(r"0\d{3}[\s.\-]?\d{3}[\s.\-]?\d{2}[\s.\-]?\d{2}")
 
 _COURIER_PATTERNS: dict[str, re.Pattern] = {
-    # 'ZOOM' sale seguido como 'Z00M' o '¿00M' en el OCR (confunde O con 0).
-    "zoom": re.compile(r"Z[O0]{2}M", re.IGNORECASE),
+    # 'ZOOM' sale seguido como 'Z00M', '¿00M' o incluso '200M' en el OCR
+    # (confunde O con 0, y la Z con ¿, ? o 2 segun la foto).
+    "zoom": re.compile(r"[Z2¿?][O0]{2}M", re.IGNORECASE),
     "mrw": re.compile(r"\bMRW\b", re.IGNORECASE),
     "domesa": re.compile(r"DOMESA", re.IGNORECASE),
 }
@@ -112,8 +113,9 @@ class ShippingLabelReader:
         nos quedamos con el primer telefono valido.
         """
         m = re.search(
-            r"[A-Za-z]estinatario:?\s*([A-ZÁÉÍÓÚÑa-záéíóúñ][A-Za-zÁÉÍÓÚÑáéíóúñ .]+?)\s*\(?\s*[Tt]el[.,]?\s*([\d /]+)",
+            r"[A-Za-z]es[tl]inatario:?\s*([A-ZÁÉÍÓÚÑa-záéíóúñ][A-Za-zÁÉÍÓÚÑáéíóúñ .]+?)\s*\(?\s*[Tt]el[.,]?\s*([\d /]+)",
             texto,
+            re.IGNORECASE,
         )
         if not m:
             return "", ""
@@ -132,10 +134,10 @@ class ShippingLabelReader:
         pasar de linea, ej. 'PARR' + 'OQUIA', asi que un salto de linea NO
         implica que la direccion termino ahi).
         """
-        m = re.search(r"[A-Za-z]estino:?\s*(.+?)ZONA\s*POSTA", texto, re.DOTALL | re.IGNORECASE)
+        m = re.search(r"[A-Za-z]?es[tl]ino:?\s*(.+?)ZONA\s*POSTA", texto, re.DOTALL | re.IGNORECASE)
         if not m:
             # Sin el marcador de fin: mejor esfuerzo hasta el primer parrafo en blanco.
-            m = re.search(r"[A-Za-z]estino:?\s*(.+?)(?:\n\s*\n|\Z)", texto, re.DOTALL)
+            m = re.search(r"[A-Za-z]?es[tl]ino:?\s*(.+?)(?:\n\s*\n|\Z)", texto, re.DOTALL | re.IGNORECASE)
         if not m:
             return ""
         direccion = re.sub(r"\s*\n\s*", " ", m.group(1))

@@ -39,6 +39,27 @@ A
 
 _OCR_SIN_COURIER_RECONOCIBLE = "algo que no tiene ningun courier conocido"
 
+# Foto real donde la Z de "ZOOM" salio como "2" o "¿" (nunca como Z literal)
+# y "Destino" salio como "eslino" (la T confundida con L).
+_OCR_ZOOM_3_Z_COMO_2_Y_T_COMO_L = """¿00M
+
+1693924875
+semitente: ERIKA di HERNANDEZ ZURILLA
+tigen: 200M LA URBIN
+
+Ael.:
+
+sestinatario: CAMILO SALGADOTel 04125575592/4125575592)
+eslino: AY. PEDRO RUFFO FERRER, (.5. LOS TEQUES Ibn AS. SECTOR E
+"AMBOR. — NID: PARROQUIA: ; MUNICIPIO: ; LOS TEQUES; MIRAND
+« VENEZUELA: ZONA POSTAL: N/D
+
+A 0
+A
+
+23/08/2026
+"""
+
 
 def test_courier_zoom_con_o_confundida_por_cero():
     reader = ShippingLabelReader()
@@ -87,3 +108,29 @@ def test_resultado_no_ok_sin_courier_reconocible():
     assert resultado.ok is False
     assert "courier" in resultado.missing_fields
     assert "recipient_name" in resultado.missing_fields
+
+
+def test_courier_zoom_con_z_confundida_por_2_o_signo_de_interrogacion():
+    reader = ShippingLabelReader()
+    resultado = reader._parsear(_OCR_ZOOM_3_Z_COMO_2_Y_T_COMO_L)
+    assert resultado.courier == "zoom"
+
+
+def test_destinatario_guia_3_con_s_por_d_y_sin_espacio_antes_de_tel():
+    reader = ShippingLabelReader()
+    resultado = reader._parsear(_OCR_ZOOM_3_Z_COMO_2_Y_T_COMO_L)
+    assert resultado.recipient_name == "CAMILO SALGADO"
+    assert resultado.recipient_phone == "04125575592"
+
+
+def test_direccion_guia_3_con_destino_leido_como_eslino():
+    reader = ShippingLabelReader()
+    resultado = reader._parsear(_OCR_ZOOM_3_Z_COMO_2_Y_T_COMO_L)
+    assert "PEDRO RUFFO FERRER" in resultado.recipient_address
+
+
+def test_resultado_ok_guia_3():
+    reader = ShippingLabelReader()
+    resultado = reader._parsear(_OCR_ZOOM_3_Z_COMO_2_Y_T_COMO_L)
+    assert resultado.ok is True
+    assert resultado.missing_fields == []
