@@ -123,6 +123,10 @@ class MercadoEnviosOrdersScraper:
             page.goto(LISTA_URL, wait_until="domcontentloaded")
             page.wait_for_timeout(2500)
             if not page.query_selector("melienvios-vendedor-orden-lista-page"):
+                logger.warning(
+                    f"Tras re-vincular y reintentar, el listado quedo en '{page.url}' "
+                    f"(titulo: '{page.title()}') sin el Gestor de Ordenes."
+                )
                 raise RuntimeError(
                     "Se re-vinculo mercadoenvios.com.ve pero el Gestor de Ordenes "
                     "sigue sin aparecer; puede que haya cambiado la interfaz."
@@ -165,7 +169,16 @@ class MercadoEnviosOrdersScraper:
 
         logger.warning("Sesion de mercadoenvios vencida; re-vinculando via SSO con la sesion de ML existente...")
         boton.first.click()
-        page.wait_for_timeout(4000)
+
+        # En produccion la navegacion tras el click puede tardar mas que en
+        # local; esperamos activamente a que deje de estar en /ingresar en
+        # vez de un timeout fijo corto, con ese timeout fijo como respaldo.
+        try:
+            page.wait_for_url(lambda url: "/ingresar" not in url, timeout=10_000)
+        except Exception:
+            pass
+        page.wait_for_timeout(2000)
+        logger.warning(f"Tras el click SSO, la pagina quedo en '{page.url}' (titulo: '{page.title()}').")
 
         try:
             context.storage_state(path=self._settings.storage_state_path)
