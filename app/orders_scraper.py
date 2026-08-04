@@ -124,8 +124,8 @@ class MercadoEnviosOrdersScraper:
             page.wait_for_timeout(2500)
             if not page.query_selector("melienvios-vendedor-orden-lista-page"):
                 logger.warning(
-                    f"Tras re-vincular y reintentar, el listado quedo en '{page.url}' "
-                    f"(titulo: '{page.title()}') sin el Gestor de Ordenes."
+                    f"Tras re-vincular y reintentar, el listado quedo en "
+                    f"'{self._url_segura(page)}' sin el Gestor de Ordenes."
                 )
                 raise RuntimeError(
                     "Se re-vinculo mercadoenvios.com.ve pero el Gestor de Ordenes "
@@ -178,7 +178,18 @@ class MercadoEnviosOrdersScraper:
         except Exception:
             pass
         page.wait_for_timeout(2000)
-        logger.warning(f"Tras el click SSO, la pagina quedo en '{page.url}' (titulo: '{page.title()}').")
+
+        url_final = self._url_segura(page)
+        logger.warning(f"Tras el click SSO, la pagina quedo en '{url_final}'.")
+
+        if "mercadoenvios.com.ve" not in url_final:
+            # El click no re-vinculo nada: nos mando a la pantalla de login
+            # completo de ML (pidiendo email/telefono), no de vuelta a
+            # mercadoenvios. Eso significa que la sesion de ML TAMBIEN vencio,
+            # no solo la de mercadoenvios — y reautenticar eso requiere
+            # credenciales/captcha, asi que no hay forma de resolverlo solo.
+            logger.warning("El click SSO no volvio a mercadoenvios.com.ve; la sesion de ML tambien vencio.")
+            return False
 
         try:
             context.storage_state(path=self._settings.storage_state_path)
@@ -187,6 +198,13 @@ class MercadoEnviosOrdersScraper:
             logger.warning(f"No se pudo persistir la sesion de mercadoenvios refrescada: {e}")
 
         return True
+
+    def _url_segura(self, page: Page) -> str:
+        """page.url puede fallar si la pagina esta navegando justo en ese instante."""
+        try:
+            return page.url
+        except Exception:
+            return "(no se pudo leer la URL, la pagina seguia navegando)"
 
     def _ir_siguiente_pagina(self, page: Page) -> bool:
         boton = page.query_selector(
