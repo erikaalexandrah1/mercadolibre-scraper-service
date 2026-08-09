@@ -4,10 +4,15 @@ fallar el envio por el chat de ML). No usa Playwright real: se le pasa un
 objeto Page falso con la misma interfaz que se usa (url, title, screenshot,
 content) para no depender de un navegador en el runner de tests.
 """
+import base64
 from pathlib import Path
 
+import pytest
+
 from app.config import Settings
-from app.ml_messaging import MlMessagingService
+from app.ml_messaging import MlMessagingError, MlMessagingService
+
+_PNG_FALSO = b"fake-png-bytes"
 
 
 class _PageFalsa:
@@ -24,11 +29,15 @@ class _PageFalsa:
     def title(self) -> str:
         return self._title
 
-    def screenshot(self, path: str, full_page: bool = True) -> None:
-        Path(path).write_bytes(b"fake-png-bytes")
+    def screenshot(self, path: str, full_page: bool = True) -> bytes:
+        Path(path).write_bytes(_PNG_FALSO)
+        return _PNG_FALSO
 
     def content(self) -> str:
         return self._contenido
+
+    def wait_for_selector(self, selector: str, timeout: int):
+        raise TimeoutError("nunca aparecio")
 
 
 def _service(tmp_path) -> MlMessagingService:
@@ -36,25 +45,36 @@ def _service(tmp_path) -> MlMessagingService:
     return MlMessagingService(settings)
 
 
+# --- _capturar_diagnostico ---
+
+
 def test_capturar_diagnostico_guarda_screenshot_y_html(tmp_path):
     service = _service(tmp_path)
     page = _PageFalsa(contenido="<div>chat viejo, sin input file</div>")
 
-    ruta = service._capturar_diagnostico(page, "selector_no_encontrado_test")
+    diag = service._capturar_diagnostico(page, "selector_no_encontrado_test")
 
-    assert ruta is not None
-    assert Path(f"{ruta}.png").exists()
-    html_path = Path(f"{ruta}.html")
+    assert diag.path is not None
+    assert Path(f"{diag.path}.png").exists()
+    html_path = Path(f"{diag.path}.html")
     assert html_path.exists()
     assert html_path.read_text(encoding="utf-8") == "<div>chat viejo, sin input file</div>"
+
+
+def test_capturar_diagnostico_devuelve_el_screenshot_en_base64(tmp_path):
+    service = _service(tmp_path)
+
+    diag = service._capturar_diagnostico(_PageFalsa(), "test")
+
+    assert diag.screenshot_b64 == base64.b64encode(_PNG_FALSO).decode("ascii")
 
 
 def test_capturar_diagnostico_nombre_incluye_el_motivo(tmp_path):
     service = _service(tmp_path)
 
-    ruta = service._capturar_diagnostico(_PageFalsa(), "boton_enviar_nunca_habilitado")
+    diag = service._capturar_diagnostico(_PageFalsa(), "boton_enviar_nunca_habilitado")
 
-    assert "boton_enviar_nunca_habilitado" in ruta
+    assert "boton_enviar_nunca_habilitado" in diag.path
 
 
 def test_capturar_diagnostico_crea_la_carpeta_si_no_existe(tmp_path):
@@ -67,14 +87,29 @@ def test_capturar_diagnostico_crea_la_carpeta_si_no_existe(tmp_path):
 
 
 def test_capturar_diagnostico_no_revienta_si_falla_el_screenshot(tmp_path):
-    """Si algo en el diagnostico falla, se loguea y se devuelve None — nunca tapa el error real."""
+    """Si algo en el diagnostico falla, se loguea y se devuelve un _Diagnostico vacio — nunca tapa el error real."""
 
     class _PageQueRevienta(_PageFalsa):
-        def screenshot(self, path: str, full_page: bool = True) -> None:
+        def screenshot(self, path: str, full_page: bool = True) -> bytes:
             raise RuntimeError("pagina ya cerrada")
 
     service = _service(tmp_path)
 
-    ruta = service._capturar_diagnostico(_PageQueRevienta(), "test")
+    diag = service._capturar_diagnostico(_PageQueRevienta(), "test")
 
-    assert ruta is None
+    assert diag.path is None
+    assert diag.screenshot_b64 is None
+
+
+# --- el screenshot llega hasta el MlMessagingError que ve el endpoint HTTP ---
+
+
+def test_esperar_selector_adjunta_el_screenshot_al_error(tmp_path):
+    service = _service(tmp_path)
+
+    with pytest.raises(MlMessagingError) as exc_info:
+        service._esperar_selector(_PageFalsa(), ".no-existe", "el input de prueba")
+
+    error = exc_info.value
+    assert "no se encontro el input de prueba".lower() in str(error).lower()
+    assert error.screenshot_b64 == base64.b64encode(_PNG_FALSO).decode("ascii")

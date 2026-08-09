@@ -14,8 +14,19 @@ adivinar o mandar algo a la persona equivocada.
 
 Restriccion NO negociable heredada del resto del scraper: nada de URLs
 directas de listado — se navega como un usuario real.
+
+Diagnostico de fallos: cuando un selector del chat no aparece (sesion
+vencida, ML cambio la interfaz), se guarda evidencia en disco (screenshot +
+HTML, ver `_capturar_diagnostico`) Y se adjunta el screenshot en base64 al
+`MlMessagingError` para que el llamador (el endpoint HTTP) lo pueda
+devolver en la respuesta y de ahi el backend se lo reenvie al operador por
+Telegram. Nada de esto toca la pagina del comprador mas alla de leerla
+(screenshot/HTML son operaciones de solo lectura) — nunca se le manda algo
+de diagnostico al cliente real, solo al operador.
 """
+import base64
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -34,7 +45,22 @@ _ESPERA_UI_MS = 8_000
 
 
 class MlMessagingError(Exception):
-    """Error esperable del flujo (comprador no encontrado, boton nunca se habilito, etc.)."""
+    """
+    Error esperable del flujo (comprador no encontrado, boton nunca se
+    habilito, etc.). `screenshot_b64`, cuando esta presente, es el PNG (en
+    base64) de la pagina en el momento del fallo — pensado para que el
+    endpoint HTTP lo reenvie al operador (Telegram), no al comprador.
+    """
+
+    def __init__(self, message: str, screenshot_b64: str | None = None):
+        super().__init__(message)
+        self.screenshot_b64 = screenshot_b64
+
+
+@dataclass
+class _Diagnostico:
+    path: str | None = None
+    screenshot_b64: str | None = None
 
 
 class MlMessagingService:
@@ -137,9 +163,12 @@ class MlMessagingService:
         try:
             return page.wait_for_selector(selector, timeout=_ESPERA_UI_MS)
         except Exception as e:
-            ruta = self._capturar_diagnostico(page, f"selector_no_encontrado_{descripcion}")
-            sufijo = f" Evidencia guardada en {ruta}." if ruta else ""
-            raise MlMessagingError(f"No se encontro {descripcion} (timeout esperandolo).{sufijo}") from e
+            diag = self._capturar_diagnostico(page, f"selector_no_encontrado_{descripcion}")
+            sufijo = f" Evidencia guardada en {diag.path}." if diag.path else ""
+            raise MlMessagingError(
+                f"No se encontro {descripcion} (timeout esperandolo).{sufijo}",
+                screenshot_b64=diag.screenshot_b64,
+            ) from e
 
     def _esperar_boton_habilitado_y_enviar(self, page: Page) -> None:
         try:
@@ -147,11 +176,12 @@ class MlMessagingService:
                 "#messageInputSubmit:not([disabled])", timeout=_ESPERA_UI_MS
             )
         except Exception as e:
-            ruta = self._capturar_diagnostico(page, "boton_enviar_nunca_habilitado")
-            sufijo = f" Evidencia guardada en {ruta}." if ruta else ""
+            diag = self._capturar_diagnostico(page, "boton_enviar_nunca_habilitado")
+            sufijo = f" Evidencia guardada en {diag.path}." if diag.path else ""
             raise MlMessagingError(
                 "El botón de enviar del chat nunca se habilitó después de adjuntar/escribir; "
-                f"puede que hayan cambiado la interfaz del chat de ML.{sufijo}"
+                f"puede que hayan cambiado la interfaz del chat de ML.{sufijo}",
+                screenshot_b64=diag.screenshot_b64,
             ) from e
 
         boton = page.query_selector("#messageInputSubmit")
@@ -162,16 +192,21 @@ class MlMessagingService:
 
     # --- diagnostico ---
 
-    def _capturar_diagnostico(self, page: Page, motivo: str) -> str | None:
+    def _capturar_diagnostico(self, page: Page, motivo: str) -> _Diagnostico:
         """
-        Guarda screenshot + HTML de la pagina en el momento del fallo, y
-        loguea URL/titulo. Pensado para responder "sesion vencida (nos
-        mando a un login) vs. ML cambio el chat (seguimos en la pagina
-        correcta pero el selector ya no existe)" sin tener que adivinar.
+        Guarda screenshot + HTML de la pagina en el momento del fallo (en
+        disco, para inspeccion manual del HTML si hace falta encontrar el
+        selector nuevo), loguea URL/titulo, y devuelve el screenshot tambien
+        en base64 para que el llamador se lo pueda mandar al operador por
+        Telegram sin depender de acceso al filesystem del contenedor.
 
         Nunca deja que un fallo ACA tape el error real: si algo de esto
         revienta (pagina ya cerrada, disco sin permiso, etc.), se loguea y
-        se sigue de largo devolviendo None.
+        se sigue de largo devolviendo un _Diagnostico vacio.
+
+        Operaciones de solo lectura sobre la pagina (screenshot/content/url/
+        title) — esto NUNCA interactua con el chat ni le manda nada al
+        comprador real, solo captura evidencia para el operador.
         """
         try:
             carpeta = Path(self._settings.debug_output_dir)
@@ -187,16 +222,16 @@ class MlMessagingService:
             )
 
             screenshot_path = base.with_suffix(".png")
-            page.screenshot(path=str(screenshot_path), full_page=True)
+            screenshot_bytes = page.screenshot(path=str(screenshot_path), full_page=True)
 
             html_path = base.with_suffix(".html")
             html_path.write_text(page.content(), encoding="utf-8")
 
             logger.error(f"Diagnostico guardado: {screenshot_path}, {html_path}")
-            return str(base)
+            return _Diagnostico(
+                path=str(base),
+                screenshot_b64=base64.b64encode(screenshot_bytes).decode("ascii"),
+            )
         except Exception as e:  # noqa: BLE001
             logger.error(f"No se pudo capturar diagnostico para '{motivo}': {e}")
-            return None
-        # Le damos tiempo a la UI a mandar el mensaje y resetear el input
-        # antes del siguiente (adjunto o mensaje de texto).
-        page.wait_for_timeout(2500)
+            return _Diagnostico()

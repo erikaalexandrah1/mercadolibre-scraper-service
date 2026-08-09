@@ -209,3 +209,11 @@ class SendShippingGuideResponse(BaseModel):
     ok: bool
     messages_sent: int = 0
     error: str | None = None
+    debug_screenshot_base64: str | None = Field(
+        None,
+        description=(
+            "Screenshot (PNG en base64) de la pagina en el momento del fallo, cuando ok=False "
+            "y se pudo capturar. Pensado para que el backend se lo reenvie al OPERADOR (no al "
+            "comprador) para diagnosticar sin acceso al filesystem del contenedor."
+        ),
+    )

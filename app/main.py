@@ -405,7 +405,9 @@ def send_shipping_guide(
         return SendShippingGuideResponse(**resultado)
     except MlMessagingError as e:
         logger.warning(f"/orders/send-shipping-guide: {e}")
-        return SendShippingGuideResponse(ok=False, messages_sent=0, error=str(e))
+        return SendShippingGuideResponse(
+            ok=False, messages_sent=0, error=str(e), debug_screenshot_base64=e.screenshot_b64
+        )
     except FileNotFoundError as e:
         logger.warning(f"/orders/send-shipping-guide: sesion no encontrada: {e}")
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e))
