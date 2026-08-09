@@ -16,7 +16,7 @@ Rutas:
   Ordenes pendientes de MercadoEnvios:
   POST  /orders/pending         -> scrapea el Gestor de Ordenes
 
-  Guias de envio (OCR local, sin CLIP ni servicios externos):
+  Guias de envio (lectura via VLM en OpenRouter, sin relacion con el CLIP local):
   POST  /shipping-labels/read        -> lee courier/destinatario/telefono/direccion de una foto
   POST  /orders/send-shipping-guide  -> adjunta la guia y manda el mensaje por el chat REAL del comprador
 
@@ -339,7 +339,7 @@ def pending_orders(settings: Settings = Depends(get_settings)) -> PendingOrdersR
     return PendingOrdersResponse(total=len(ordenes), orders=[PendingOrder(**o) for o in ordenes])
 
 
-# --- Guias de envio (OCR local) ---
+# --- Guias de envio (VLM via OpenRouter) ---
 
 
 @app.post(
@@ -350,14 +350,14 @@ def pending_orders(settings: Settings = Depends(get_settings)) -> PendingOrdersR
 )
 def read_shipping_label(file: UploadFile = File(...)) -> ShippingLabelReadResponse:
     """
-    Lee una foto de guia (ZOOM/MRW/Domesa) con OCR local (Tesseract, sin CLIP
-    ni servicios externos) y extrae courier, nombre, telefono y direccion del
-    destinatario.
+    Lee una foto de guia (ZOOM/MRW/Domesa) con un modelo de vision
+    (OpenRouter, ver `OPENROUTER_VISION_MODEL`) y extrae courier, nombre,
+    telefono y direccion del destinatario.
 
     `ok=False` cuando falta algun campo clave (foto borrosa/torcida, courier
-    no reconocido, etc.) — en ese caso NO se debe usar el resultado para
-    mandarle algo a un cliente real; el `raw_text` sirve para depurar por que
-    fallo el parseo.
+    no reconocido, el modelo no tuvo confianza suficiente, etc.) — en ese
+    caso NO se debe usar el resultado para mandarle algo a un cliente real;
+    el `raw_text` sirve para depurar (es la respuesta cruda del modelo).
     """
     try:
         data = file.file.read()

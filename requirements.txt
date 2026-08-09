@@ -12,8 +12,5 @@ pillow==10.4.0
 numpy==1.26.4
 # torch se instala aparte (build CPU) en el Dockerfile para no traer CUDA.
 torch==2.3.1
-# --- OCR local de guias de envio (necesita el binario tesseract-ocr del SO,
-#     instalado en el Dockerfile) ---
-pytesseract==0.3.13
 # --- Tests ---
 pytest==8.2.2

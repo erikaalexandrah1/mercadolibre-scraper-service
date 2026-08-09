@@ -3,11 +3,6 @@ FROM mcr.microsoft.com/playwright/python:v1.45.0-jammy
 
 WORKDIR /app
 
-# 0) Tesseract (OCR local de guias de envio) + paquete de idioma espanol.
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    tesseract-ocr tesseract-ocr-spa \
-    && rm -rf /var/lib/apt/lists/*
-
 # 1) Instalar torch en su build de CPU (evita descargar ~2GB de CUDA).
 #    Al fijar la misma version que requirements.txt, pip la da por satisfecha.
 RUN pip install --no-cache-dir torch==2.3.1 --index-url https://download.pytorch.org/whl/cpu

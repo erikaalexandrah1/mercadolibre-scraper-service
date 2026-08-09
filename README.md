@@ -53,7 +53,7 @@ Detalles de diseño y restricciones en [AGENTS.md](AGENTS.md).
 | PATCH  | `/references/{ref_id}`| Edita `search_queries` (tags de busqueda) / `active` |
 | POST   | `/compare`            | Compara catalogo vs competencia por imagen        |
 | POST   | `/orders/pending`     | Scrapea el Gestor de Ordenes de MercadoEnvios (pendientes) |
-| POST   | `/shipping-labels/read` | Lee courier/destinatario/telefono/direccion de una foto de guia (OCR local) |
+| POST   | `/shipping-labels/read` | Lee courier/destinatario/telefono/direccion de una foto de guia (VLM via OpenRouter) |
 
 Docs interactivas (Swagger) en `/docs` al levantar el servicio.
 
@@ -107,7 +107,7 @@ nada: es lectura pura, pensada para que un backend la consuma y decida que
 hacer con cada orden. Detalle completo del contrato en
 [BACKEND_INTEGRATION.md](BACKEND_INTEGRATION.md).
 
-### Guias de envio (OCR local)
+### Guias de envio (VLM via OpenRouter)
 
 ```bash
 curl -X POST http://localhost:8000/shipping-labels/read \
@@ -115,13 +115,14 @@ curl -X POST http://localhost:8000/shipping-labels/read \
   -F "file=@guia.jpg"
 ```
 
-Lee una foto de guia de ZOOM/MRW/Domesa con Tesseract (local, sin CLIP ni
-servicios externos) y devuelve courier, nombre/telefono/direccion del
-destinatario. `ok=false` cuando falta algun campo clave (foto borrosa,
-courier no reconocido) — en ese caso el consumidor NO deberia usar el
-resultado para mandarle algo a un cliente real. Probado y calibrado contra
-guias reales de ZOOM; MRW y Domesa usan el mismo parseo generico pero no
-estan verificadas todavia contra fotos reales.
+Lee una foto de guia de ZOOM/MRW/Domesa con un modelo de vision (OpenRouter,
+`OPENROUTER_VISION_MODEL`, default `qwen/qwen3-vl-30b-a3b-instruct`) y
+devuelve courier, nombre/telefono/direccion del destinatario ya
+estructurados — sin CLIP de por medio, que solo se usa para comparar fotos
+entre si. Requiere `OPENROUTER_API_KEY` configurada. `ok=false` cuando falta
+algun campo clave (foto borrosa, courier no reconocido, o el modelo no tuvo
+confianza suficiente y devolvio null) — en ese caso el consumidor NO deberia
+usar el resultado para mandarle algo a un cliente real.
 
 ### Enviar la guia por el chat real del comprador
 

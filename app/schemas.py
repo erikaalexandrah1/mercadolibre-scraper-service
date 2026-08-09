@@ -175,12 +175,13 @@ class PendingOrdersResponse(BaseModel):
     orders: list[PendingOrder]
 
 
-# --- Lectura de guias de envio (OCR local) ---
+# --- Lectura de guias de envio (VLM via OpenRouter) ---
 
 
 class ShippingLabelReadResponse(BaseModel):
     """
-    Resultado de leer una foto de guia (ZOOM/MRW/Domesa) por OCR local.
+    Resultado de leer una foto de guia (ZOOM/MRW/Domesa) con un modelo de
+    vision (OpenRouter).
 
     `ok=False` si no se pudieron sacar los 3 datos clave del destinatario
     (nombre, telefono, direccion) o no se reconocio el courier — en ese caso
@@ -194,7 +195,7 @@ class ShippingLabelReadResponse(BaseModel):
     recipient_phone: str = ""
     recipient_address: str = ""
     missing_fields: list[str] = Field(default_factory=list)
-    raw_text: str = Field("", description="Texto crudo del OCR, util para depurar cuando falla el parseo")
+    raw_text: str = Field("", description="Respuesta cruda del modelo, util para depurar cuando falla el parseo")
 
 
 class SendShippingGuideResponse(BaseModel):

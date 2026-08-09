@@ -1,47 +1,71 @@
 """
-Lectura de guias de envio (fotos de etiquetas ZOOM/MRW/Domesa) por OCR local.
+Lectura de guias de envio (fotos de etiquetas ZOOM/MRW/Domesa) por VLM.
 
-No usa CLIP ni ningun servicio externo: el embedder de imagenes (CLIP) solo
-compara si dos fotos SE PARECEN entre si, no lee texto. Para leer courier,
-destinatario, telefono y direccion de la etiqueta impresa se usa Tesseract
-(local, gratis) con un preprocesamiento simple (escala de grises + upscale
-2x) que en las pruebas fue el que mejor resultado dio contra fotos reales
-sacadas con celular.
+Antes esto usaba Tesseract local (OCR) + un parser por courier a regex.
+Se cambio por un modelo de vision (OpenRouter, Qwen3-VL-30B-A3B-Instruct)
+que lee la foto con contexto y devuelve directamente courier + datos del
+destinatario en JSON. Esto resuelve los casos que rompian el parser viejo:
+el logo de MRW es un watermark que Tesseract casi nunca leia, el texto
+multicolumna salia mezclado, y letras confundidas (O/0, D/J) rompian los
+regex de campo. Un VLM entiende la etiqueta como imagen, no como texto
+plano, asi que no necesita heuristicas por courier.
+
+El CLIP (embeddings de imagen) sigue siendo local: eso solo compara si dos
+fotos SE PARECEN entre si, no lee texto, y no tiene relacion con esto.
 
 Las etiquetas de mensajeria vienen con calidad de foto variable (angulo,
 luz, arrugas de la bolsa) y a veces el texto impreso mismo viene cortado
 (ej. un telefono secundario truncado). Por eso esto NUNCA debe usarse a
 ciegas para mandarle algo a un cliente real: `LabelReadResult.ok` indica si
-se pudieron sacar los 3 campos con confianza razonable; si no, el llamador
-debe pedir revision manual en vez de adivinar.
+se pudieron sacar los 4 campos con confianza razonable; si no, el llamador
+debe pedir revision manual en vez de adivinar. El prompt le pide al modelo
+explicitamente que devuelva null en vez de adivinar un campo que no puede
+leer con confianza.
 """
 from __future__ import annotations
 
-import re
+import base64
+import json
+import logging
 from dataclasses import dataclass, field
+from io import BytesIO
 
-import pytesseract
+import httpx
 from PIL import Image
 
-# Telefono venezolano tipico: 04XX-XXXXXXX (con o sin separadores).
-_TELEFONO_RE = re.compile(r"0\d{3}[\s.\-]?\d{3}[\s.\-]?\d{2}[\s.\-]?\d{2}")
+from app.config import get_settings
 
-# Etiqueta 'DEST:' de MRW: la D inicial sale confundida seguido (ej. 'pesT:'),
-# por eso se tolera cualquier letra + 'es' + T/L. El ':' es obligatorio para
-# no matchear por accidente dentro de 'DESTINO:' (el bloque de la oficina de
-# entrega, que es OTRO campo).
-_MRW_DEST_LABEL = r"[A-Za-z]es[TtLl]:"
+logger = logging.getLogger("app.shipping_label")
 
-_COURIER_PATTERNS: dict[str, re.Pattern] = {
-    # 'ZOOM' sale seguido como 'Z00M', '¿00M' o incluso '200M' en el OCR
-    # (confunde O con 0, y la Z con ¿, ? o 2 segun la foto).
-    "zoom": re.compile(r"[Z2¿?][O0]{2}M", re.IGNORECASE),
-    # El logo 'MRW' de la bolsa es un watermark diagonal, no texto plano: el
-    # OCR casi nunca lo lee. Se reconoce por jerga propia de su formato de
-    # guia en vez de depender de la sigla.
-    "mrw": re.compile(r"\bMRW\b|ENSACADO|CUPONES|COBRO EN DESTINO", re.IGNORECASE),
-    "domesa": re.compile(r"DOMESA", re.IGNORECASE),
+_OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+
+_COURIERS_VALIDOS = {"zoom", "mrw", "domesa"}
+
+_PROMPT = """Sos un lector de guias de envio venezolanas (couriers ZOOM, MRW o Domesa).
+
+Mira la foto y devolveme SOLO un JSON (sin texto alrededor, sin markdown, sin \
+comentarios) con esta forma exacta:
+{
+  "courier": "zoom" | "mrw" | "domesa" | null,
+  "recipient_name": string | null,
+  "recipient_phone": string | null,
+  "recipient_address": string | null
 }
+
+Reglas:
+- "courier": identificalo por el logo, formato o jerga propia de cada uno \
+(ZOOM, MRW, ENSACADO, CUPONES, DOMESA, GUIA DE PORTE). Si no estas seguro, null.
+- "recipient_name": el nombre del DESTINATARIO, nunca el remitente/sender. En \
+MRW aparece junto a "DEST:", en Zoom y Domesa junto a "Destinatario:".
+- "recipient_phone": telefono venezolano del destinatario en formato \
+04XXXXXXXXX (11 digitos, sin espacios ni guiones). Si el numero esta truncado \
+o no se lee completo, null.
+- "recipient_address": la direccion de ENTREGA del destinatario completa, \
+nunca la del remitente/origen.
+- Si no podes leer un campo con confianza razonable (foto borrosa, cortada, \
+texto ilegible), poné null en vez de adivinar. Esto se usa para mandarle un \
+mensaje a un cliente real: preferible null a un dato incorrecto.
+"""
 
 
 @dataclass
@@ -61,37 +85,77 @@ class LabelReadResult:
 
 
 class ShippingLabelReader:
-    """Lee una foto de guia y extrae courier + datos del destinatario."""
+    """Lee una foto de guia y extrae courier + datos del destinatario via VLM."""
 
     def read(self, image: Image.Image) -> LabelReadResult:
-        texto = self._ocr(image)
-        return self._parsear(texto)
+        buf = BytesIO()
+        image.convert("RGB").save(buf, format="JPEG", quality=90)
+        respuesta = self._consultar_vlm(buf.getvalue())
+        return self._parsear(respuesta)
 
     def read_bytes(self, data: bytes) -> LabelReadResult:
-        from io import BytesIO
-
         return self.read(Image.open(BytesIO(data)))
 
     # --- internos ---
 
-    def _ocr(self, image: Image.Image) -> str:
-        """Escala de grises + upscale 2x + PSM 3: lo que mejor funcionó en pruebas."""
-        gris = image.convert("L")
-        ancho, alto = gris.size
-        agrandada = gris.resize((ancho * 2, alto * 2), Image.LANCZOS)
-        return pytesseract.image_to_string(agrandada, lang="spa", config="--psm 3")
+    def _consultar_vlm(self, jpeg_bytes: bytes) -> str:
+        settings = get_settings()
+        if not settings.openrouter_api_key:
+            raise RuntimeError("OPENROUTER_API_KEY no configurada")
 
-    def _parsear(self, texto: str) -> LabelReadResult:
-        courier = self._extraer_courier(texto)
-        if courier == "mrw":
-            nombre, telefono = self._extraer_destinatario_mrw(texto)
-            direccion = self._extraer_destino_mrw(texto)
-        elif courier == "domesa":
-            nombre, telefono = self._extraer_destinatario_domesa(texto)
-            direccion = self._extraer_destino_domesa(texto)
-        else:
-            nombre, telefono = self._extraer_destinatario(texto)
-            direccion = self._extraer_destino(texto)
+        b64 = base64.b64encode(jpeg_bytes).decode("ascii")
+        payload = {
+            "model": settings.openrouter_vision_model,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": _PROMPT},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
+                        },
+                    ],
+                }
+            ],
+            "response_format": {"type": "json_object"},
+            "temperature": 0,
+        }
+        resp = httpx.post(
+            _OPENROUTER_URL,
+            headers={
+                "Authorization": f"Bearer {settings.openrouter_api_key}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+            timeout=60.0,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return data["choices"][0]["message"]["content"]
+
+    def _parsear(self, respuesta_vlm: str) -> LabelReadResult:
+        """
+        Valida y normaliza el JSON que devolvio el modelo. No confia en que
+        venga bien formado ni en que respete el contrato: si el JSON es
+        invalido o falta un campo, se trata como no leido (missing_fields),
+        nunca se inventa un valor.
+        """
+        try:
+            datos = json.loads(respuesta_vlm)
+            if not isinstance(datos, dict):
+                raise ValueError("la respuesta no es un objeto JSON")
+        except (json.JSONDecodeError, ValueError):
+            logger.warning(f"Respuesta del VLM no es JSON valido: {respuesta_vlm[:300]!r}")
+            datos = {}
+
+        courier = str(datos.get("courier") or "").strip().lower()
+        if courier not in _COURIERS_VALIDOS:
+            courier = ""
+
+        nombre = str(datos.get("recipient_name") or "").strip()
+        telefono = str(datos.get("recipient_phone") or "").strip()
+        direccion = str(datos.get("recipient_address") or "").strip()
 
         faltantes = []
         if not courier:
@@ -108,136 +172,6 @@ class ShippingLabelReader:
             recipient_name=nombre,
             recipient_phone=telefono,
             recipient_address=direccion,
-            raw_text=texto,
+            raw_text=respuesta_vlm,
             missing_fields=faltantes,
         )
-
-    def _extraer_courier(self, texto: str) -> str:
-        for courier, patron in _COURIER_PATTERNS.items():
-            if patron.search(texto):
-                return courier
-        return ""
-
-    def _extraer_destinatario(self, texto: str) -> tuple[str, str]:
-        """
-        De 'Destinatario:EDDIS ENRIQUE PADRON COLINA(Tel.04121623093/4' saca
-        ('EDDIS ENRIQUE PADRON COLINA', '04121623093').
-
-        La 'D' inicial a veces sale como 'J' en el OCR (confusion de fuente),
-        por eso se matchea cualquier letra + 'estinatario'. El telefono en la
-        etiqueta a veces viene truncado a mitad (segundo numero incompleto);
-        nos quedamos con el primer telefono valido.
-        """
-        m = re.search(
-            r"[A-Za-z]es[tl]inatario:?\s*([A-ZÁÉÍÓÚÑa-záéíóúñ][A-Za-zÁÉÍÓÚÑáéíóúñ .]+?)\s*\(?\s*[Tt]el[.,]?\s*([\d /]+)",
-            texto,
-            re.IGNORECASE,
-        )
-        if not m:
-            return "", ""
-
-        nombre = re.sub(r"\s+", " ", m.group(1)).strip()
-        telefonos = _TELEFONO_RE.findall(m.group(2))
-        telefono = telefonos[0] if telefonos else ""
-        return nombre, telefono
-
-    def _extraer_destinatario_mrw(self, texto: str) -> tuple[str, str]:
-        """
-        MRW usa un formato de campos distinto al de Zoom/Domesa: el nombre
-        viene en 'DEST: WILLIAM AULAR V-11820181' (nombre + cedula, sin
-        telefono ahi), y el telefono del destinatario esta pegado al bloque
-        anterior de 'DESTINO:' (la oficina/direccion de entrega), no al
-        nombre. El TLF que aparece ANTES de 'DESTINO:' es el del remitente,
-        no nos sirve.
-        """
-        m_nombre = re.search(
-            _MRW_DEST_LABEL + r"\s*([A-ZÁÉÍÓÚÑa-záéíóúñ][A-Za-zÁÉÍÓÚÑáéíóúñ .]+?)\s*[VEve][-.]?\d{6,9}",
-            texto,
-            re.IGNORECASE,
-        )
-        nombre = re.sub(r"\s+", " ", m_nombre.group(1)).strip() if m_nombre else ""
-
-        telefono = ""
-        m_bloque = re.search(r"DESTINO:(.+?)" + _MRW_DEST_LABEL, texto, re.DOTALL | re.IGNORECASE)
-        if m_bloque:
-            telefonos = _TELEFONO_RE.findall(m_bloque.group(1))
-            telefono = telefonos[0] if telefonos else ""
-
-        return nombre, telefono
-
-    def _extraer_destino_mrw(self, texto: str) -> str:
-        """
-        OJO: en la foto de prueba, Tesseract mezclo el orden de lectura entre
-        columnas (multi-columna con precios al lado) y el texto que sigue a
-        'DIR:' quedo partido/incompleto. Lo que SI queda pegado de forma
-        confiable es el resto de la direccion justo despues del nombre+cedula
-        (' DEST: NOMBRE V-12345678'), asi que se ancla ahi en vez de en 'DIR:'.
-        Termina en el codigo postal ('CP ...') o en la seccion de tipo de
-        envio ('TIPO:').
-        """
-        m_dest = re.search(
-            _MRW_DEST_LABEL + r"\s*[A-ZÁÉÍÓÚÑa-záéíóúñ][A-Za-zÁÉÍÓÚÑáéíóúñ .]+?\s*[VEve][-.]?\d{6,9}",
-            texto,
-            re.IGNORECASE,
-        )
-        resto = texto[m_dest.end():] if m_dest else texto
-
-        m = re.search(r"(.+?)(?:\bCP\b|TIPO)", resto, re.DOTALL | re.IGNORECASE)
-        if not m:
-            m = re.search(r"(.+?)(?:\n\s*\n|\Z)", resto, re.DOTALL)
-        if not m:
-            return ""
-        direccion = re.sub(r"\s*\n\s*", " ", m.group(1))
-        return re.sub(r"\s+", " ", direccion).strip()
-
-    def _extraer_destinatario_domesa(self, texto: str) -> tuple[str, str]:
-        """
-        Domesa trae nombre, cedula y telefono todos juntos en una sola linea:
-        'Destinatario: Alln Vicente Carvajal Castellanos, V-V13601602,
-        04244092227' — separados por comas. Nos quedamos con lo que hay antes
-        de la primera coma como nombre, y buscamos el telefono en todo el
-        bloque (mas confiable que asumir su posicion exacta, porque el OCR a
-        veces parte el numero de cedula a mitad con un salto de linea).
-        """
-        m = re.search(r"Destinatario:?\s*(.+?)Detalles del Env", texto, re.DOTALL | re.IGNORECASE)
-        if not m:
-            return "", ""
-
-        bloque = re.sub(r"\s+", " ", m.group(1)).strip()
-        nombre = bloque.split(",")[0].strip()
-        telefonos = _TELEFONO_RE.findall(bloque)
-        telefono = telefonos[0] if telefonos else ""
-        return nombre, telefono
-
-    def _extraer_destino_domesa(self, texto: str) -> str:
-        """
-        La direccion de destino viene bajo 'Localidad:' (dentro del bloque
-        'Direccion Destino:') y termina en el codigo postal 'ZP: NNNN'. OJO:
-        el remitente tambien tiene su propia 'Direccion Origen' que termina
-        en su propio 'ZP: NNNN' mas abajo — como se busca el primer 'ZP:'
-        despues de 'Localidad:', se agarra el del destinatario, no el del
-        remitente.
-        """
-        m = re.search(r"Localidad:?\s*(.+?ZP:\s*\d+)", texto, re.DOTALL | re.IGNORECASE)
-        if not m:
-            return ""
-        direccion = re.sub(r"\s*\n\s*", " ", m.group(1))
-        return re.sub(r"\s+", " ", direccion).strip()
-
-    def _extraer_destino(self, texto: str) -> str:
-        """
-        Todo lo que sigue a 'Destino:' (con la misma confusion D/J que el
-        destinatario). El bloque de direccion termina siempre en 'ZONA
-        POSTAL', asi que se usa como marcador de fin en vez de cortar en el
-        primer salto de linea (la impresora corta a mitad de palabra al
-        pasar de linea, ej. 'PARR' + 'OQUIA', asi que un salto de linea NO
-        implica que la direccion termino ahi).
-        """
-        m = re.search(r"[A-Za-z]?es[tl]ino:?\s*(.+?)ZONA\s*POSTA", texto, re.DOTALL | re.IGNORECASE)
-        if not m:
-            # Sin el marcador de fin: mejor esfuerzo hasta el primer parrafo en blanco.
-            m = re.search(r"[A-Za-z]?es[tl]ino:?\s*(.+?)(?:\n\s*\n|\Z)", texto, re.DOTALL | re.IGNORECASE)
-        if not m:
-            return ""
-        direccion = re.sub(r"\s*\n\s*", " ", m.group(1))
-        return re.sub(r"\s+", " ", direccion).strip()

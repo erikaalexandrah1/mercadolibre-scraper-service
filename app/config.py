@@ -41,6 +41,10 @@ class Settings(BaseSettings):
     # Modelo de sentence-transformers para vectorizar imagenes.
     clip_model: str = "clip-ViT-B-32"
 
+    # --- Lectura de guias de envio (VLM via OpenRouter) ---
+    openrouter_api_key: str = ""
+    openrouter_vision_model: str = "qwen/qwen3-vl-30b-a3b-instruct"
+
     # --- API ---
     # Si se define, todas las rutas (excepto /health) exigen el header
     # 'X-API-Key' con este valor. Si queda vacio, la API es abierta.
