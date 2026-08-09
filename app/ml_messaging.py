@@ -146,7 +146,20 @@ class MlMessagingService:
         # OJO: la pagina tiene OTRO input[type=file] escondido en el menu de
         # usuario (el de "Cambiar foto" del nav, presente en cualquier pagina
         # logueada) que aparece ANTES en el DOM. Hay que acotar al del chat.
-        input_archivo = self._esperar_selector(page, '.message-input-box input[type="file"]', "el input de adjuntar archivo en el chat")
+        #
+        # OJO 2: este input esta oculto por CSS (el boton "Adjuntar archivo"
+        # con el icono de clip es el que se ve; el <input type=file> real es
+        # invisible, patron estandar de ML). wait_for_selector espera
+        # 'visible' por default, y un input escondido NUNCA se vuelve
+        # visible — con eso el timeout salta siempre, sesion vigente o no.
+        # set_input_files funciona perfecto sobre un input oculto, asi que
+        # alcanza con esperar a que este en el DOM ('attached').
+        input_archivo = self._esperar_selector(
+            page,
+            '.message-input-box input[type="file"]',
+            "el input de adjuntar archivo en el chat",
+            state="attached",
+        )
         input_archivo.set_input_files({"name": "guia.jpg", "mimeType": "image/jpeg", "buffer": image_bytes})
         self._esperar_boton_habilitado_y_enviar(page)
 
@@ -159,9 +172,9 @@ class MlMessagingService:
         textarea.fill(texto)
         self._esperar_boton_habilitado_y_enviar(page)
 
-    def _esperar_selector(self, page: Page, selector: str, descripcion: str):
+    def _esperar_selector(self, page: Page, selector: str, descripcion: str, state: str = "visible"):
         try:
-            return page.wait_for_selector(selector, timeout=_ESPERA_UI_MS)
+            return page.wait_for_selector(selector, timeout=_ESPERA_UI_MS, state=state)
         except Exception as e:
             diag = self._capturar_diagnostico(page, f"selector_no_encontrado_{descripcion}")
             sufijo = f" Evidencia guardada en {diag.path}." if diag.path else ""

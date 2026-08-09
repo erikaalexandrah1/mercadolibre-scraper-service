@@ -36,7 +36,8 @@ class _PageFalsa:
     def content(self) -> str:
         return self._contenido
 
-    def wait_for_selector(self, selector: str, timeout: int):
+    def wait_for_selector(self, selector: str, timeout: int, state: str = "visible"):
+        self.ultimo_state_pedido = state
         raise TimeoutError("nunca aparecio")
 
 
@@ -113,3 +114,33 @@ def test_esperar_selector_adjunta_el_screenshot_al_error(tmp_path):
     error = exc_info.value
     assert "no se encontro el input de prueba".lower() in str(error).lower()
     assert error.screenshot_b64 == base64.b64encode(_PNG_FALSO).decode("ascii")
+
+
+# --- state por default vs. el input de archivo, que esta oculto por CSS ---
+
+
+def test_esperar_selector_usa_visible_por_default(tmp_path):
+    """El textarea del chat SI es visible; no tiene sentido relajar esa espera."""
+    service = _service(tmp_path)
+    page = _PageFalsa()
+
+    with pytest.raises(MlMessagingError):
+        service._esperar_selector(page, "textarea", "el campo de texto")
+
+    assert page.ultimo_state_pedido == "visible"
+
+
+def test_esperar_selector_permite_pedir_attached_para_el_input_de_archivo(tmp_path):
+    """
+    El <input type=file> del chat de ML esta oculto por CSS (el boton visible
+    de 'Adjuntar archivo' es otro elemento); pedir 'visible' ahi nunca
+    resuelve, timeoutea siempre. set_input_files funciona igual sobre un
+    input oculto, asi que alcanza con 'attached' (en el DOM).
+    """
+    service = _service(tmp_path)
+    page = _PageFalsa()
+
+    with pytest.raises(MlMessagingError):
+        service._esperar_selector(page, 'input[type="file"]', "el input de adjuntar", state="attached")
+
+    assert page.ultimo_state_pedido == "attached"
