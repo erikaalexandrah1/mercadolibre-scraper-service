@@ -15,11 +15,17 @@ adivinar o mandar algo a la persona equivocada.
 Restriccion NO negociable heredada del resto del scraper: nada de URLs
 directas de listado — se navega como un usuario real.
 """
+import logging
+from datetime import datetime, timezone
+from pathlib import Path
+
 from playwright.sync_api import Page
 
 from app.browser import browser_context
 from app.config import Settings
 from app.shipping_messages import mensajes_para_courier
+
+logger = logging.getLogger("app.ml_messaging")
 
 VENTAS_URL = "https://www.mercadolibre.com.ve/ventas/omni/listado"
 # Cuanto esperar a que el chat termine de re-renderizar tras adjuntar/enviar
@@ -131,7 +137,9 @@ class MlMessagingService:
         try:
             return page.wait_for_selector(selector, timeout=_ESPERA_UI_MS)
         except Exception as e:
-            raise MlMessagingError(f"No se encontro {descripcion} (timeout esperandolo).") from e
+            ruta = self._capturar_diagnostico(page, f"selector_no_encontrado_{descripcion}")
+            sufijo = f" Evidencia guardada en {ruta}." if ruta else ""
+            raise MlMessagingError(f"No se encontro {descripcion} (timeout esperandolo).{sufijo}") from e
 
     def _esperar_boton_habilitado_y_enviar(self, page: Page) -> None:
         try:
@@ -139,13 +147,56 @@ class MlMessagingService:
                 "#messageInputSubmit:not([disabled])", timeout=_ESPERA_UI_MS
             )
         except Exception as e:
+            ruta = self._capturar_diagnostico(page, "boton_enviar_nunca_habilitado")
+            sufijo = f" Evidencia guardada en {ruta}." if ruta else ""
             raise MlMessagingError(
                 "El botón de enviar del chat nunca se habilitó después de adjuntar/escribir; "
-                "puede que hayan cambiado la interfaz del chat de ML."
+                f"puede que hayan cambiado la interfaz del chat de ML.{sufijo}"
             ) from e
 
         boton = page.query_selector("#messageInputSubmit")
         boton.click()
+        # Le damos tiempo a la UI a mandar el mensaje y resetear el input
+        # antes del siguiente (adjunto o mensaje de texto).
+        page.wait_for_timeout(2500)
+
+    # --- diagnostico ---
+
+    def _capturar_diagnostico(self, page: Page, motivo: str) -> str | None:
+        """
+        Guarda screenshot + HTML de la pagina en el momento del fallo, y
+        loguea URL/titulo. Pensado para responder "sesion vencida (nos
+        mando a un login) vs. ML cambio el chat (seguimos en la pagina
+        correcta pero el selector ya no existe)" sin tener que adivinar.
+
+        Nunca deja que un fallo ACA tape el error real: si algo de esto
+        revienta (pagina ya cerrada, disco sin permiso, etc.), se loguea y
+        se sigue de largo devolviendo None.
+        """
+        try:
+            carpeta = Path(self._settings.debug_output_dir)
+            carpeta.mkdir(parents=True, exist_ok=True)
+
+            timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+            base = carpeta / f"{timestamp}_{motivo}"
+
+            url_actual = page.url
+            titulo_actual = page.title()
+            logger.error(
+                f"Fallo en chat de ML ({motivo}). url={url_actual!r} title={titulo_actual!r}"
+            )
+
+            screenshot_path = base.with_suffix(".png")
+            page.screenshot(path=str(screenshot_path), full_page=True)
+
+            html_path = base.with_suffix(".html")
+            html_path.write_text(page.content(), encoding="utf-8")
+
+            logger.error(f"Diagnostico guardado: {screenshot_path}, {html_path}")
+            return str(base)
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"No se pudo capturar diagnostico para '{motivo}': {e}")
+            return None
         # Le damos tiempo a la UI a mandar el mensaje y resetear el input
         # antes del siguiente (adjunto o mensaje de texto).
         page.wait_for_timeout(2500)

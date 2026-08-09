@@ -1,6 +1,9 @@
 # --- Sesion de MercadoLibre: NUNCA subir (contiene tu sesion iniciada) ---
 storage_state.json
 
+# --- Diagnostico de fallos del chat de ML (screenshots + HTML, puede tener datos de compradores) ---
+debug_output/
+
 # --- Guia de integracion del backend: lleva la API key, NO subir ---
 BACKEND_INTEGRATION.md
 

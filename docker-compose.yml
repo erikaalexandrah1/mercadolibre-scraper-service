@@ -16,6 +16,11 @@ services:
     volumes:
       # Monta tu sesion generada en local dentro del contenedor.
       - ./storage_state.json:/app/storage_state.json:ro
+      # Screenshots/HTML de diagnostico cuando falla el envio por chat de ML
+      # (ver app/ml_messaging.py). En Coolify, montar un volumen equivalente
+      # si queres que sobrevivan a un redeploy; sin esto quedan en el
+      # filesystem efimero del contenedor pero igual se loguean URL/titulo.
+      - ./debug_output:/app/debug_output
     depends_on:
       - mongo
 

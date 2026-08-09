@@ -45,6 +45,13 @@ class Settings(BaseSettings):
     openrouter_api_key: str = ""
     openrouter_vision_model: str = "qwen/qwen3-vl-30b-a3b-instruct"
 
+    # --- Diagnostico de fallos del chat de ML (screenshot + HTML) ---
+    # Carpeta donde se guarda evidencia cuando el envio por chat de ML falla
+    # (selector no encontrado, boton nunca habilitado). En Coolify esto vive
+    # en el filesystem efimero del contenedor salvo que montes un volumen;
+    # de todas formas queda logueado (URL + titulo) en los logs del servicio.
+    debug_output_dir: str = "debug_output"
+
     # --- API ---
     # Si se define, todas las rutas (excepto /health) exigen el header
     # 'X-API-Key' con este valor. Si queda vacio, la API es abierta.

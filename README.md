@@ -141,6 +141,12 @@ aparece, aparece mas de una vez, o el chat de ML cambio de interfaz y el
 boton de enviar nunca se habilita, devuelve `ok:false` con el detalle en
 `error` en vez de mandar algo a medias o a la persona equivocada.
 
+Si el timeout de un selector del chat falla (sesion vencida, ML cambio la
+interfaz, etc.), se guarda un screenshot + el HTML de la pagina en ese
+momento en `DEBUG_OUTPUT_DIR` (default `debug_output/`) y se loguea la
+URL/titulo de la pagina — para diferenciar sesion vencida de UI nueva sin
+tener que reproducirlo a ciegas.
+
 ## Correr en local
 
 Necesitas Docker (para Mongo) y Python 3.10+.
