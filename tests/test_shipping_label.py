@@ -5,7 +5,7 @@ depender de una API key ni de red en el runner de tests).
 """
 import json
 
-from app.shipping_label import ShippingLabelReader
+from app.shipping_label import ShippingLabelReader, TrackingNumberReader
 
 
 def _json(**campos) -> str:
@@ -223,3 +223,24 @@ def test_extraer_contenido_ok():
     reader = ShippingLabelReader()
     contenido = reader._extraer_contenido({"choices": [{"message": {"content": '{"courier": "zoom"}'}}]})
     assert contenido == '{"courier": "zoom"}'
+
+
+# --- TrackingNumberReader: lector separado, solo para desambiguar ventas (ver ml_messaging) ---
+
+
+def test_tracking_number_reader_limpia_a_solo_digitos():
+    reader = TrackingNumberReader()
+    assert reader._limpiar("1695206588") == "1695206588"
+    assert reader._limpiar("ZOOM 1695480627") == "1695480627"
+
+
+def test_tracking_number_reader_null_da_vacio():
+    reader = TrackingNumberReader()
+    assert reader._limpiar("NULL") == ""
+    assert reader._limpiar("null") == ""
+    assert reader._limpiar("  Null  ") == ""
+
+
+def test_tracking_number_reader_numero_muy_corto_se_descarta():
+    reader = TrackingNumberReader()
+    assert reader._limpiar("123") == ""

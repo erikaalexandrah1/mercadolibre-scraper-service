@@ -286,3 +286,89 @@ class ShippingLabelReader:
         if limpio and len(limpio) < _TELEFONO_MIN_DIGITOS:
             return ""
         return limpio
+
+
+# El numero de guia varia bastante en longitud entre couriers (Zoom ~10
+# digitos, MRW ~15). Solo filtramos basura obvia, no un largo exacto.
+_TRACKING_MIN_DIGITOS = 6
+
+_TRACKING_PROMPT = """Esta foto es una guia de envio venezolana (ZOOM, MRW o Domesa).
+
+Decime UNICAMENTE el numero de guia/tracking del envio: el numero grande \
+pegado al nombre del courier en la parte superior de la etiqueta (ej. "ZOOM \
+1695480627"), o junto a la palabra "TRACKING". Respondé SOLO los digitos, \
+sin texto alrededor, sin espacios, sin letras, sin explicacion. Si no lo ves \
+con claridad, respondé exactamente NULL.
+"""
+
+
+class TrackingNumberReader:
+    """
+    Lee SOLO el numero de guia/tracking de la foto — deliberadamente separado
+    de `ShippingLabelReader` (prompt y llamado al VLM propios, sin tocar
+    `_PROMPT`). Esto solo hace falta en el caso raro de que el mismo
+    username matchee mas de una venta en `ventas/omni/listado`: ahi
+    `MlMessagingService` compara este numero contra el mensaje automatico de
+    ML en cada chat candidato ("El número de guía para tu envío es: ...")
+    para saber a cual de las ventas corresponde la foto de hoy. No tiene
+    sentido pagar esta consulta extra en cada guia que se lee, solo cuando
+    hace falta desambiguar.
+    """
+
+    def leer(self, image_bytes: bytes) -> str:
+        imagen = Image.open(BytesIO(image_bytes)).convert("RGB")
+        buf = BytesIO()
+        imagen.save(buf, format="JPEG", quality=90)
+        respuesta = self._consultar_vlm(buf.getvalue())
+        return self._limpiar(respuesta)
+
+    def _consultar_vlm(self, jpeg_bytes: bytes) -> str:
+        settings = get_settings()
+        if not settings.openrouter_api_key:
+            raise RuntimeError("OPENROUTER_API_KEY no configurada")
+
+        b64 = base64.b64encode(jpeg_bytes).decode("ascii")
+        payload = {
+            "model": settings.openrouter_vision_model,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": _TRACKING_PROMPT},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
+                        },
+                    ],
+                }
+            ],
+            "temperature": 0,
+        }
+        resp = httpx.post(
+            _OPENROUTER_URL,
+            headers={
+                "Authorization": f"Bearer {settings.openrouter_api_key}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+            timeout=60.0,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+
+        choices = data.get("choices") or []
+        if not choices:
+            raise RuntimeError(f"OpenRouter no devolvio 'choices': {data}")
+        contenido = (choices[0].get("message") or {}).get("content")
+        if not contenido:
+            raise RuntimeError(f"OpenRouter devolvio una respuesta vacia: {data}")
+        return contenido
+
+    def _limpiar(self, respuesta: str) -> str:
+        """Solo digitos; NULL o restos muy cortos se tratan como no leido."""
+        if respuesta.strip().upper() == "NULL":
+            return ""
+        limpio = re.sub(r"\D", "", respuesta)
+        if len(limpio) < _TRACKING_MIN_DIGITOS:
+            return ""
+        return limpio

@@ -15,6 +15,16 @@ adivinar o mandar algo a la persona equivocada.
 Restriccion NO negociable heredada del resto del scraper: nada de URLs
 directas de listado — se navega como un usuario real.
 
+Ambiguedad por username duplicado: si el mismo username matchea mas de una
+venta, no se elige "la mas nueva" ni ninguna otra heuristica de posicion —
+eso podria mandarle la guia de un comprador a la venta de otro. En cambio,
+se lee el numero de guia de la foto de HOY (`TrackingNumberReader`, VLM
+aparte del que lee courier/nombre/telefono/direccion) y se entra a cada
+chat candidato a buscar el mensaje automatico que ML manda al generar el
+envio ("El número de guía para tu envío es: XXXXX"). Si ese numero aparece
+en un UNICO chat, ese es; si aparece en cero o en mas de uno, sigue siendo
+ambiguo y se corta igual (ver `_desambiguar_por_tracking`).
+
 Diagnostico de fallos: cuando un selector del chat no aparece (sesion
 vencida, ML cambio la interfaz), se guarda evidencia en disco (screenshot +
 HTML, ver `_capturar_diagnostico`) Y se adjunta el screenshot en base64 al
@@ -34,6 +44,7 @@ from playwright.sync_api import Page
 
 from app.browser import browser_context
 from app.config import Settings
+from app.shipping_label import TrackingNumberReader
 from app.shipping_messages import mensajes_para_courier
 
 logger = logging.getLogger("app.ml_messaging")
@@ -76,7 +87,7 @@ class MlMessagingService:
 
         with browser_context(self._settings) as context:
             page = context.new_page()
-            mensajeria_href = self._buscar_comprador(page, buyer_username)
+            mensajeria_href = self._buscar_comprador(page, buyer_username, image_bytes)
             page.goto(mensajeria_href, wait_until="domcontentloaded")
             page.wait_for_timeout(2000)
 
@@ -90,7 +101,7 @@ class MlMessagingService:
 
     # --- ubicar al comprador ---
 
-    def _buscar_comprador(self, page: Page, username: str) -> str:
+    def _buscar_comprador(self, page: Page, username: str, image_bytes: bytes) -> str:
         page.goto(VENTAS_URL, wait_until="domcontentloaded")
         page.wait_for_timeout(2500)
 
@@ -100,7 +111,7 @@ class MlMessagingService:
             caja.fill(username)
             caja.press("Enter")
             page.wait_for_timeout(2000)
-            href = self._href_por_username_en_pagina(page, username)
+            href = self._resolver_href(page, username, image_bytes)
             if href:
                 return href
             # Sin resultados por busqueda: limpiamos y probamos el listado sin filtrar.
@@ -108,7 +119,7 @@ class MlMessagingService:
             caja.press("Enter")
             page.wait_for_timeout(2000)
 
-        href = self._href_por_username_en_pagina(page, username)
+        href = self._resolver_href(page, username, image_bytes)
         if href:
             return href
 
@@ -116,7 +127,37 @@ class MlMessagingService:
             f"No encontre a '{username}' en ventas/omni/listado (ni buscando ni en el listado reciente)."
         )
 
-    def _href_por_username_en_pagina(self, page: Page, username: str) -> str | None:
+    def _resolver_href(self, page: Page, username: str, image_bytes: bytes) -> str | None:
+        """
+        Devuelve el href de mensajeria de la venta, o None si el username no
+        matcheo ninguna fila en esta pagina (el llamador decide si intentar
+        de otra forma). Si matchea mas de una, intenta desambiguar por
+        numero de guia antes de rendirse (ver modulo docstring); si no se
+        puede, corta con MlMessagingError — nunca elige "la mas nueva" ni
+        ninguna otra heuristica de posicion.
+        """
+        candidatos = self._hrefs_por_username_en_pagina(page, username)
+        if not candidatos:
+            return None
+        if len(candidatos) == 1:
+            return candidatos[0]
+
+        tracking = self._leer_tracking_number_de_hoy(image_bytes)
+        if tracking:
+            resuelto = self._desambiguar_por_tracking(page, username, candidatos, tracking)
+            if resuelto:
+                return resuelto
+
+        detalle = (
+            f" (numero de guia {tracking} no aparecio en ninguno o en mas de un chat)"
+            if tracking
+            else " (no se pudo leer el numero de guia de la foto para desambiguar)"
+        )
+        raise MlMessagingError(
+            f"'{username}' matcheo {len(candidatos)} ventas distintas en el listado{detalle}; ambiguo, no se manda nada."
+        )
+
+    def _hrefs_por_username_en_pagina(self, page: Page, username: str) -> list[str]:
         filas = page.query_selector_all(".sc-row-marketplace")
         candidatos: list[str] = []
         for fila in filas:
@@ -131,13 +172,45 @@ class MlMessagingService:
             if href:
                 candidatos.append(href)
 
-        candidatos = list(dict.fromkeys(candidatos))  # sin duplicados, conserva orden
-        if len(candidatos) == 1:
-            return candidatos[0]
-        if len(candidatos) > 1:
-            raise MlMessagingError(
-                f"'{username}' matcheo {len(candidatos)} ventas distintas en el listado; ambiguo, no se manda nada."
+        return list(dict.fromkeys(candidatos))  # sin duplicados, conserva orden
+
+    def _leer_tracking_number_de_hoy(self, image_bytes: bytes) -> str:
+        """Nunca deja que un fallo de lectura tumbe el flujo: sin numero, simplemente no se puede desambiguar."""
+        try:
+            return TrackingNumberReader().leer(image_bytes)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"No se pudo leer el numero de guia de la foto para desambiguar: {e}")
+            return ""
+
+    def _desambiguar_por_tracking(
+        self, page: Page, username: str, candidatos: list[str], tracking_number: str
+    ) -> str | None:
+        """
+        Entra a cada chat candidato y busca el mensaje automatico que ML
+        manda al generar el envio ("El número de guía para tu envío es:
+        XXXXX"). Si el numero de la foto de hoy aparece en un UNICO chat,
+        ese es. Si aparece en cero o en mas de uno, no alcanza para
+        desambiguar con confianza — se devuelve None y el llamador corta con
+        el error de ambiguedad de siempre.
+        """
+        coincidencias = []
+        for href in candidatos:
+            try:
+                page.goto(href, wait_until="domcontentloaded")
+                page.wait_for_timeout(1500)
+                texto = page.content()
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"No se pudo revisar el chat {href} buscando el numero de guia: {e}")
+                continue
+            if tracking_number in texto:
+                coincidencias.append(href)
+
+        coincidencias = list(dict.fromkeys(coincidencias))
+        if len(coincidencias) == 1:
+            logger.info(
+                f"Ambiguedad de '{username}' resuelta por numero de guia {tracking_number}: {coincidencias[0]}"
             )
+            return coincidencias[0]
         return None
 
     # --- chat de la venta ---

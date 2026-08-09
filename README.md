@@ -137,9 +137,18 @@ curl -X POST http://localhost:8000/orders/send-shipping-guide \
 Ubica al comprador por username en `ventas/omni/listado`, entra a su chat
 real, adjunta la foto y manda el mensaje del courier (partido automatico si
 supera 340 caracteres). Le escribe a un CLIENTE REAL — si el comprador no
-aparece, aparece mas de una vez, o el chat de ML cambio de interfaz y el
-boton de enviar nunca se habilita, devuelve `ok:false` con el detalle en
-`error` en vez de mandar algo a medias o a la persona equivocada.
+aparece, o el chat de ML cambio de interfaz y el boton de enviar nunca se
+habilita, devuelve `ok:false` con el detalle en `error` en vez de mandar
+algo a medias o a la persona equivocada.
+
+Si el username matchea mas de una venta (comprador recurrente), NO se
+asume "la mas nueva": se lee el numero de guia de la foto de hoy (lector
+aparte, ver `TrackingNumberReader` en `app/shipping_label.py`) y se entra a
+cada chat candidato a buscar el mensaje automatico de ML ("El número de
+guía para tu envío es: XXXXX"). Si el numero aparece en un unico chat, se
+manda ahi; si no se puede desambiguar (aparece en 0 o en mas de uno, o no
+se pudo leer el numero de la foto), sigue devolviendo `ok:false` como
+ambiguo.
 
 Si el timeout de un selector del chat falla (sesion vencida, ML cambio la
 interfaz, etc.), se guarda un screenshot + el HTML de la pagina en ese
